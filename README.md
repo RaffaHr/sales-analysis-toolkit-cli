@@ -214,9 +214,3 @@ Passo a passo:
 - Revisar periodicamente se a base Excel está aderente às colunas esperadas.
 - Validar os relatórios gerados com as equipes comercial e de operações.
 - Incorporar testes automatizados à medida que novas regras de negócio forem adicionadas.
-
----
-
-## 10. Contato
-
-Dúvidas, melhorias ou sugestões podem ser organizadas diretamente no repositório ou com o time responsável pela análise de dados e produto.
