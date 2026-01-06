@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Iterable
+
+import hashlib
+import re
 
 import numpy as np
 import pandas as pd
@@ -37,39 +40,104 @@ PERCENT_COLUMNS = ["perc_margem_bruta"]
 
 
 class SalesDataLoader:
-    """Centraliza a leitura e tratamento inicial da planilha de vendas."""
+    """Centraliza a leitura, combinação e tratamento inicial das abas de vendas."""
 
-    def __init__(self, excel_path: Path | str, sheet_name: str = "VENDA") -> None:
+    def __init__(
+        self,
+        excel_path: Path | str,
+        sheet_name: str = "VENDA",
+        cache_dir: Path | str | None = Path(".cache"),
+        enable_cache: bool = True,
+    ) -> None:
         self.excel_path = Path(excel_path)
         self.sheet_name = sheet_name
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else None
+        self.enable_cache = enable_cache
 
     def load(self) -> pd.DataFrame:
-        """Carrega a aba de vendas e devolve um DataFrame padronizado."""
+        """Carrega as abas de vendas e devolve um DataFrame padronizado."""
         if not self.excel_path.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {self.excel_path}")
 
-        df = pd.read_excel(
-            self.excel_path,
-            sheet_name=self.sheet_name,
-            engine="openpyxl",
-            dtype={
-                "CD_PRODUTO": str,
-                "DS_PRODUTO": str,
-                "ANO_MES": str,
-                "NR_NOTA_FISCAL": str,
-            },
-        )
+        sheet_names = self._resolve_sheet_names()
+        cache = self._try_load_cache(sheet_names)
+        if cache is not None:
+            return cache
 
-        df = self._normalize_columns(df)
+        frames = []
+        for name in sheet_names:
+            raw = pd.read_excel(
+                self.excel_path,
+                sheet_name=name,
+                engine="openpyxl",
+                dtype={
+                    "CD_PRODUTO": str,
+                    "DS_PRODUTO": str,
+                    "ANO_MES": str,
+                    "NR_NOTA_FISCAL": str,
+                },
+            )
+            frames.append(self._normalize_columns(raw))
+
+        df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
         df = self._coerce_numeric(df)
         df = self._enrich(df)
+        self._store_cache(df, sheet_names)
         return df
+
+    def _resolve_sheet_names(self) -> list[str]:
+        with pd.ExcelFile(self.excel_path, engine="openpyxl") as workbook:
+            available = workbook.sheet_names
+
+        if self.sheet_name in available:
+            return [self.sheet_name]
+
+        matches = [name for name in available if name.startswith(self.sheet_name)]
+        if matches:
+            return sorted(matches, key=_natural_sort_key)
+
+        raise ValueError(
+            "Nenhuma aba corresponde ao padrão solicitado. "
+            f"Informe uma aba existente ou use prefixos como '{self.sheet_name}01'."
+        )
 
     def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         available_map = {original: COLUMN_MAP[original] for original in df.columns if original in COLUMN_MAP}
         df = df.rename(columns=available_map)
         df.columns = [col.strip().lower() for col in df.columns]
         return df
+
+    def _try_load_cache(self, sheet_names: Iterable[str]) -> Optional[pd.DataFrame]:
+        if not self.enable_cache or self.cache_dir is None:
+            return None
+        cache_path = self._cache_path(sheet_names)
+        if not cache_path.exists():
+            return None
+        cache_mtime = cache_path.stat().st_mtime
+        excel_mtime = self.excel_path.stat().st_mtime
+        if cache_mtime < excel_mtime:
+            return None
+        try:
+            return pd.read_pickle(cache_path)
+        except Exception:
+            return None
+
+    def _store_cache(self, df: pd.DataFrame, sheet_names: Iterable[str]) -> None:
+        if not self.enable_cache or self.cache_dir is None:
+            return
+        cache_path = self._cache_path(sheet_names)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            df.to_pickle(cache_path)
+        except Exception:
+            pass
+
+    def _cache_path(self, sheet_names: Iterable[str]) -> Path:
+        signature = ",".join(sorted(sheet_names))
+        digest = hashlib.md5(signature.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
+        name = f"{self.excel_path.stem}_{digest}.pkl"
+        base_dir = self.cache_dir if self.cache_dir is not None else self.excel_path.parent
+        return base_dir / name
 
     def _coerce_numeric(self, df: pd.DataFrame) -> pd.DataFrame:
         for column in NUMERIC_COLUMNS:
@@ -151,7 +219,12 @@ class SalesDataLoader:
         return df
 
 
-def load_sales_dataset(path: Path | str, sheet_name: str = "VENDA") -> pd.DataFrame:
+def load_sales_dataset(path: Path | str, sheet_name: str = "VENDA", **kwargs) -> pd.DataFrame:
     """Atalho simples para carregar o conjunto de vendas padronizado."""
-    loader = SalesDataLoader(path, sheet_name)
+    loader = SalesDataLoader(path, sheet_name, **kwargs)
     return loader.load()
+
+
+def _natural_sort_key(value: str) -> list[object]:
+    parts = re.split(r"(\d+)", value)
+    return [int(part) if part.isdigit() else part.lower() for part in parts]

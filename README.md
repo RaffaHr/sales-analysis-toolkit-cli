@@ -42,7 +42,7 @@ analysis/
    pip install pandas openpyxl numpy
    ```
 
-3. Arquivo `BASE.xlsx` na raiz do projeto com a aba `VENDA` e colunas abaixo.
+3. Arquivo `BASE.xlsx` na raiz do projeto com a aba `VENDA` (ou divisões `VENDA01`, `VENDA02`, ...) e colunas abaixo.
 
 ---
 
@@ -86,6 +86,9 @@ Essas colunas servem de base para as análises subsequentes.
 
 > **Formato dos percentuais**: todos os campos de taxa ou margem nos relatórios finais são exibidos como texto com duas casas decimais e o símbolo `%` (ex.: `7,00%`).
 > **Referência de preços**: as análises comparativas adicionam `preco_min_intervalo` (menor preço no intervalo filtrado) e `preco_min_historico_total` (menor preço observado em todo o histórico) para cada SKU.
+
+> **Bases fracionadas em várias abas**: quando a planilha superar o limite de linhas do Excel, use abas sequenciais como `VENDA01`, `VENDA02`, etc. O carregador identifica automaticamente todas as abas que começam com `VENDA`, combina os dados e mantém as mesmas etapas de limpeza.
+> **Cache automático**: após a primeira execução, o dataset pré-processado é salvo em `.cache/`. Se o `BASE.xlsx` não mudar, próximas execuções reutilizam esse cache e pulam a leitura pesada do Excel.
 
 ---
 ## 6. Executando o Script

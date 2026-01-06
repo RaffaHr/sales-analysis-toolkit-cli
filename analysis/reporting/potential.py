@@ -20,7 +20,31 @@ def build_potential_sku_analysis(
     recent_periods: Optional[list[str]] = None,
     recent_window: int = RECENT_WINDOW,
 ) -> Dict[str, pd.DataFrame]:
-    """Identifica SKUs com queda recente, mas histórico forte de vendas."""
+    """Identifica SKUs com queda recente, mas histórico forte de vendas.
+    
+    Exemplo:
+    Imagine o SKU “PRODUTO A” com vendas de janeiro/2024 a janeiro/2026:
+
+    2024/01: 120 unidades
+    2024/02: 100
+    2024/03: 110
+    … segue firme até 2025/06, sempre entre 90 e 130 unidades → esse conjunto de meses forma o histórico forte do produto.
+    Agora considere os últimos três meses (janela recente que você escolheu na CLI):
+
+    2025/11: 55 unidades
+    2025/12: 45
+    2026/01: 35
+    Quando rodamos a análise:
+
+    Histórico = todo o período EXCETO os meses selecionados na janela recente (jan/24 a out/25). Calculamos aí a média de vendas, pedidos, margem etc. Suponha que a média de unidades no histórico seja 105.
+    Janela recente = períodos que você escolheu (nov/25, dez/25, jan/26). A média ficou em 45 unidades.
+    Comparando:
+
+    Queda absoluta = 105 – 45 = 60 unidades.
+    Queda percentual = 60 / 105 ≈ 57%.
+
+    Como o produto tinha desempenho constante por quase dois anos e despencou nos meses recentes, ele entra como candidato: o histórico mostra potencial, a janela recente sinaliza queda e, se a taxa de devolução/margem estiver aceitável, o relatório classifica esse SKU como “em potencial".
+    """
     data = _filter_by_category(df, category)
     interval_prices = (
         data.groupby("cd_produto")["preco_vendido"].min()

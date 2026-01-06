@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import sys
+import threading
+import time
+from itertools import cycle
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple, List
 
@@ -11,6 +15,36 @@ from .reporting.low_cost import build_low_cost_reputation_analysis
 from .reporting.potential import build_potential_sku_analysis
 from .reporting.returns import build_return_analysis
 from .reporting.top_history import build_top_history_analysis
+
+
+class _ConsoleSpinner:
+    """Mostra uma animação simples enquanto operações demoradas rodam."""
+
+    def __init__(self, message: str, interval: float = 0.1) -> None:
+        self._message = message.strip()
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._line_template = f"{self._message} " if self._message else ""
+
+    def __enter__(self) -> "_ConsoleSpinner":
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop_event.set()
+        self._thread.join()
+        clear_len = len(self._line_template) + 2
+        sys.stdout.write("\r" + " " * clear_len + "\r")
+        sys.stdout.flush()
+
+    def _animate(self) -> None:
+        spinner = cycle("|/-\\")
+        while not self._stop_event.is_set():
+            frame = next(spinner)
+            sys.stdout.write(f"\r{self._line_template}{frame}")
+            sys.stdout.flush()
+            time.sleep(self._interval)
 
 
 class AnalysisOption:
@@ -55,8 +89,11 @@ ANALYSIS_OPTIONS = [
 
 def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:
     """Executa o fluxo interativo de seleção e geração das análises."""
-    df_full = load_sales_dataset(dataset_path)
-    historical_prices = _compute_historical_lowest_prices(df_full)
+    with _ConsoleSpinner("Carregando dados e calculando métricas iniciais"):
+        df_full = load_sales_dataset(dataset_path)
+        historical_prices = _compute_historical_lowest_prices(df_full)
+
+    print("Dados carregados com sucesso.")
 
     while True:
         option = _prompt_analysis_option()
