@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Iterable
+from typing import Callable, Iterable, Optional
 
 import hashlib
 import re
 
 import numpy as np
 import pandas as pd
+from openpyxl import load_workbook
 
 COLUMN_MAP = {
     "ANO_MES": "ano_mes",
@@ -39,6 +40,9 @@ NUMERIC_COLUMNS = [
 PERCENT_COLUMNS = ["perc_margem_bruta"]
 
 
+ProgressCallback = Callable[[int, int], None]
+
+
 class SalesDataLoader:
     """Centraliza a leitura, combinação e tratamento inicial das abas de vendas."""
 
@@ -48,11 +52,13 @@ class SalesDataLoader:
         sheet_name: str = "VENDA",
         cache_dir: Path | str | None = Path(".cache"),
         enable_cache: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self.excel_path = Path(excel_path)
         self.sheet_name = sheet_name
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.enable_cache = enable_cache
+        self.progress_callback = progress_callback
 
     def load(self) -> pd.DataFrame:
         """Carrega as abas de vendas e devolve um DataFrame padronizado."""
@@ -62,24 +68,13 @@ class SalesDataLoader:
         sheet_names = self._resolve_sheet_names()
         cache = self._try_load_cache(sheet_names)
         if cache is not None:
+            self._notify_progress(1, 1)
             return cache
 
-        frames = []
-        for name in sheet_names:
-            raw = pd.read_excel(
-                self.excel_path,
-                sheet_name=name,
-                engine="openpyxl",
-                dtype={
-                    "CD_PRODUTO": str,
-                    "DS_PRODUTO": str,
-                    "ANO_MES": str,
-                    "NR_NOTA_FISCAL": str,
-                },
-            )
-            frames.append(self._normalize_columns(raw))
-
-        df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+        if self.progress_callback is None:
+            df = self._read_with_pandas(sheet_names)
+        else:
+            df = self._read_with_progress(sheet_names)
         df = self._coerce_numeric(df)
         df = self._enrich(df)
         self._store_cache(df, sheet_names)
@@ -106,6 +101,15 @@ class SalesDataLoader:
         df = df.rename(columns=available_map)
         df.columns = [col.strip().lower() for col in df.columns]
         return df
+
+    def _notify_progress(self, processed: int, total: int) -> None:
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(processed, total)
+        except Exception:
+            # Evita que uma falha na atualização de progresso interrompa o carregamento
+            pass
 
     def _try_load_cache(self, sheet_names: Iterable[str]) -> Optional[pd.DataFrame]:
         if not self.enable_cache or self.cache_dir is None:
@@ -138,6 +142,82 @@ class SalesDataLoader:
         name = f"{self.excel_path.stem}_{digest}.pkl"
         base_dir = self.cache_dir if self.cache_dir is not None else self.excel_path.parent
         return base_dir / name
+
+    def _read_with_pandas(self, sheet_names: list[str]) -> pd.DataFrame:
+        frames = []
+        for name in sheet_names:
+            raw = pd.read_excel(
+                self.excel_path,
+                sheet_name=name,
+                engine="openpyxl",
+                dtype={
+                    "CD_PRODUTO": str,
+                    "DS_PRODUTO": str,
+                    "ANO_MES": str,
+                    "NR_NOTA_FISCAL": str,
+                },
+            )
+            frames.append(self._normalize_columns(raw))
+        return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+
+    def _read_with_progress(self, sheet_names: list[str]) -> pd.DataFrame:
+        workbook = load_workbook(self.excel_path, read_only=True, data_only=True)
+        try:
+            sheet_totals = {name: self._sheet_data_rows(workbook[name]) for name in sheet_names}
+            total_rows = sum(sheet_totals.values())
+            total_rows = max(total_rows, 1)
+            self._notify_progress(0, total_rows)
+
+            frames: list[pd.DataFrame] = []
+            processed = 0
+            for name in sheet_names:
+                ws = workbook[name]
+                header_iter = ws.iter_rows(min_row=1, max_row=1, values_only=True)
+                try:
+                    header_tuple = next(header_iter)
+                except StopIteration:
+                    continue
+                header = [self._ensure_str(cell) for cell in header_tuple]
+                data_rows: list[list[object]] = []
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    if row is None:
+                        continue
+                    row_values = list(row)
+                    if not any(value is not None for value in row_values):
+                        continue
+                    if len(row_values) < len(header):
+                        row_values.extend([None] * (len(header) - len(row_values)))
+                    elif len(row_values) > len(header):
+                        row_values = row_values[: len(header)]
+                    data_rows.append(row_values)
+                    processed += 1
+                    self._notify_progress(processed, total_rows)
+                if data_rows:
+                    frame = pd.DataFrame.from_records(data_rows, columns=header)
+                else:
+                    frame = pd.DataFrame(columns=header)
+                frames.append(self._normalize_columns(frame))
+
+            if not frames:
+                self._notify_progress(total_rows, total_rows)
+                return pd.DataFrame()
+
+            df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+            self._notify_progress(total_rows, total_rows)
+            return df
+        finally:
+            workbook.close()
+
+    @staticmethod
+    def _sheet_data_rows(ws) -> int:
+        max_row = ws.max_row or 0
+        return max(max_row - 1, 0)
+
+    @staticmethod
+    def _ensure_str(value: object) -> str:
+        if value is None:
+            return ""
+        return str(value)
 
     def _coerce_numeric(self, df: pd.DataFrame) -> pd.DataFrame:
         for column in NUMERIC_COLUMNS:

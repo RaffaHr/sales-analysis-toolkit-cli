@@ -17,6 +17,33 @@ from .reporting.returns import build_return_analysis
 from .reporting.top_history import build_top_history_analysis
 
 
+class _ProgressPrinter:
+    """Exibe o progresso percentual real das etapas de carregamento."""
+
+    def __init__(self, label: str) -> None:
+        self._label = label.strip()
+        self._last_percent = -1
+        self._finished = False
+
+    def update(self, processed: int, total: int) -> None:
+        percent = 100 if total <= 0 else int(round((processed / total) * 100))
+        percent = max(0, min(100, percent))
+        if percent != self._last_percent or processed >= total:
+            sys.stdout.write(f"\r{self._label}: {percent:3d}%")
+            sys.stdout.flush()
+            self._last_percent = percent
+        if processed >= total and not self._finished:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._finished = True
+
+    def finish(self) -> None:
+        if not self._finished:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._finished = True
+
+
 class _ConsoleSpinner:
     """Mostra uma animação simples enquanto operações demoradas rodam."""
 
@@ -89,11 +116,12 @@ ANALYSIS_OPTIONS = [
 
 def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:
     """Executa o fluxo interativo de seleção e geração das análises."""
-    with _ConsoleSpinner("Carregando dados e calculando métricas iniciais"):
-        df_full = load_sales_dataset(dataset_path)
-        historical_prices = _compute_historical_lowest_prices(df_full)
+    progress = _ProgressPrinter("Carregando dados")
+    df_full = load_sales_dataset(dataset_path, progress_callback=progress.update)
+    progress.finish()
 
-    print("Dados carregados com sucesso.")
+    with _ConsoleSpinner("Calculando métricas históricas"):
+        historical_prices = _compute_historical_lowest_prices(df_full)
 
     while True:
         option = _prompt_analysis_option()

@@ -1,2 +1,4 @@
 *.xlsx
 .cache/
+*.pyc
+__pycache__/
