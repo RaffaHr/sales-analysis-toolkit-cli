@@ -319,7 +319,7 @@ def _structured_reference(table_name: str, column_name: str) -> str:
 def _build_series_range(sheet_name: str, start_row: int, col: int) -> str:
     start_row_excel = start_row + 1
     col_letter = xl_col_to_name(col)
-    return f"='{sheet_name}'!${col_letter}${start_row_excel}:${col_letter}$1048576"
+    return f"='{sheet_name}'!${col_letter}${start_row_excel}:${col_letter}$1000"
 
 
 def _build_filtered_formula(
