@@ -371,7 +371,10 @@ def _infer_columns_info(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         if pd.api.types.is_datetime64_any_dtype(series):
             kind = "date"
         elif pd.api.types.is_numeric_dtype(series):
-            kind = "numeric"
+            if _looks_like_percentage(column, series):
+                kind = "percentage"
+            else:
+                kind = "numeric"
         else:
             sample = series.dropna().astype(str)
             if sample.empty:
@@ -390,6 +393,17 @@ def _infer_columns_info(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
             entry["convert_to_date"] = True
         info[column] = entry
     return info
+
+
+def _looks_like_percentage(column_name: str, series: pd.Series) -> bool:
+    name = column_name.lower()
+    keywords = ("percent", "perc", "pct", "margem", "taxa", "rate")
+    if any(keyword in name for keyword in keywords):
+        return True
+    non_na = pd.to_numeric(series.dropna(), errors="coerce")
+    if non_na.empty:
+        return False
+    return non_na.between(-2, 2).all()
 
 
 def _build_default_chart_config(

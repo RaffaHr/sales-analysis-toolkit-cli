@@ -189,8 +189,18 @@ def _add_dynamic_chart(
         column_positions[("secondary", col_name)] = current_col
         current_col += 1
 
-    chart_type = chart_spec.get("chart_type", "column")
-    chart = workbook.add_chart({"type": chart_type})
+    main_chart_type = chart_spec.get("chart_type", "column")
+    chart = workbook.add_chart({"type": main_chart_type})
+    charts_by_type: Dict[str, Any] = {main_chart_type: chart}
+    combination_order: List[str] = []
+
+    def _get_chart_for_type(series_type: str):
+        if series_type == main_chart_type:
+            return chart
+        if series_type not in charts_by_type:
+            charts_by_type[series_type] = workbook.add_chart({"type": series_type})
+            combination_order.append(series_type)
+        return charts_by_type[series_type]
     chart_title = chart_spec.get("title") or f"{target_sheet_key}"
     chart.set_title({"name": chart_title})
 
@@ -198,7 +208,7 @@ def _add_dynamic_chart(
     y_axis_label = chart_spec.get("y_axis_label", "Valores")
     y2_axis_label = chart_spec.get("y2_axis_label", "")
 
-    if chart_type not in {"pie", "doughnut"}:
+    if main_chart_type not in {"pie", "doughnut"}:
         x_axis_options = {"name": x_axis_label}
         if columns_info.get(x_column, {}).get("kind") == "date":
             x_axis_options["num_format"] = "dd/mm/yyyy"
@@ -223,10 +233,9 @@ def _add_dynamic_chart(
             "categories": categories_range,
             "values": value_range,
         }
-        specific_type = series.get("chart_type")
-        if specific_type:
-            series_options["chart_type"] = specific_type
-        chart.add_series(series_options)
+        series_type = series.get("chart_type", main_chart_type)
+        target_chart = _get_chart_for_type(series_type)
+        target_chart.add_series(series_options)
 
     secondary_chart_type = chart_spec.get("secondary_chart_type")
     for series in secondary_series:
@@ -242,10 +251,9 @@ def _add_dynamic_chart(
             "y2_axis": True,
         }
         series_options["categories"] = categories_range
-        specific_type = series.get("chart_type") or secondary_chart_type
-        if specific_type:
-            series_options["chart_type"] = specific_type
-        chart.add_series(series_options)
+        series_type = series.get("chart_type") or secondary_chart_type or main_chart_type
+        target_chart = _get_chart_for_type(series_type)
+        target_chart.add_series(series_options)
 
     chart.set_style(10)
     chart.set_legend({"position": "bottom"})
@@ -253,6 +261,8 @@ def _add_dynamic_chart(
     chart_row = data_header_row
     chart_col = current_col + 1
     chart.set_size({"width": 760, "height": 420})
+    for extra_type in combination_order:
+        chart.combine(charts_by_type[extra_type])
     target_ws.insert_chart(chart_row, chart_col, chart, {"x_offset": 15, "y_offset": 10})
 
 
