@@ -163,9 +163,7 @@ class SalesDataLoader:
     def _read_with_progress(self, sheet_names: list[str]) -> pd.DataFrame:
         workbook = load_workbook(self.excel_path, read_only=True, data_only=True)
         try:
-            sheet_totals = {name: self._sheet_data_rows(workbook[name]) for name in sheet_names}
-            total_rows = sum(sheet_totals.values())
-            total_rows = max(total_rows, 1)
+            total_rows = sum(self._sheet_data_rows(workbook[name]) for name in sheet_names)
             self._notify_progress(0, total_rows)
 
             frames: list[pd.DataFrame] = []

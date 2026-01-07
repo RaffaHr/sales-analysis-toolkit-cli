@@ -89,6 +89,7 @@ Essas colunas servem de base para as análises subsequentes.
 
 > **Bases fracionadas em várias abas**: quando a planilha superar o limite de linhas do Excel, use abas sequenciais como `VENDA01`, `VENDA02`, etc. O carregador identifica automaticamente todas as abas que começam com `VENDA`, combina os dados e mantém as mesmas etapas de limpeza.
 > **Cache automático**: após a primeira execução, o dataset pré-processado é salvo em `.cache/`. Se o `BASE.xlsx` não mudar, próximas execuções reutilizam esse cache e pulam a leitura pesada do Excel.
+> **Progresso em tempo real**: o CLI exibe o percentual real de linhas já carregadas (0–100%) antes de iniciar os cálculos das análises, oferecendo feedback imediato em bases volumosas.
 
 ---
 ## 6. Executando o Script
