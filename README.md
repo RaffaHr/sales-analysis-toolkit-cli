@@ -27,6 +27,7 @@ analysis/
         potential.py    # análise de SKUs com potencial de retomada
         top_history.py  # ranking histórico de SKUs recorrentes
         low_cost.py     # busca de produtos baratos para reputação
+      product_focus.py # análise de performance de venda
 ```
 
 ---
@@ -50,11 +51,13 @@ analysis/
 
 | Coluna original (Excel)            | Coluna normalizada (DataFrame) | Descrição resumida                                      |
 |-----------------------------------|--------------------------------|---------------------------------------------------------|
-| ANO_MES                           | `ano_mes`                      | Referência temporal no formato `YYYYMM`.               |
+| DATA                              | `data`                         | Data completa do pedido no formato `dd/mm/aaaa`.       |
 | NR_NOTA_FISCAL                    | `nr_nota_fiscal`               | Identificador único da nota/pedido (uma linha por pedido).|
 | CATEGORIA                         | `categoria`                    | Segmento ou linha de produto.                          |
 | CD_PRODUTO                        | `cd_produto`                   | Código interno do SKU.                                 |
 | DS_PRODUTO                        | `ds_produto`                   | Descrição comercial do SKU.                            |
+| CD_FABRICANTE                     | `cd_fabricante`                | Código do SKU no fabricante/parceiro.                  |
+| TP_ANUNCIO                        | `tp_anuncio`                   | Tipo de anúncio (ex.: produto final, kit, variação).   |
 | Qtd de pedido                     | `qtd_pedidos`                  | Indicador legado de pedidos (mantido para referência). |
 | Qtd de sku no pedido              | `qtd_sku`                      | Quantidade total de unidades vendidas.                 |
 | ROB                               | `rob`                          | Receita Bruta observada (quando disponível).           |
@@ -64,16 +67,16 @@ analysis/
 | Qtd Produto Devolvido             | `qtd_devolvido`                | Quantidade devolvida no período.                       |
 | Devolução Receita Bruta Tot$      | `devolucao_receita_bruta`      | Valor bruto das devoluções.                            |
 
-> **Importante:** o carregamento converte nomes para minúsculo e remove espaços extras. Outras colunas são preservadas, mas não utilizadas nas análises atuais.
+> **Importante:** o carregamento converte nomes para minúsculo, remove espaços extras e normaliza a coluna `DATA` para `datetime`. As colunas derivadas `ano_mes` e `periodo` continuam disponíveis para compatibilidade, sendo calculadas automaticamente a partir da data. Campos de texto como `cd_fabricante` e `tp_anuncio` são preenchidos com padrões quando ausentes. Demais colunas são preservadas, embora não utilizadas nas análises atuais.
 
 ---
 
 ## 5. Enriquecimento Automático de Dados
 
 
-1. **`periodo`**: derivado de `ano_mes`, convertido para `YYYY-MM` (período mensal Pandas).
+1. **Datas padronizadas**: a coluna `data` é convertida para `datetime` (interpretando `dd/mm/aaaa`) e normalizada para meia-noite. A partir dela são gerados `periodo` (`Period[M]`) e `ano_mes` (`YYYYMM`) para manter comparações mensais.
 2. **Coerção numérica**: remove símbolos (`%`, vírgula decimal) e converte a `float`. Percentuais acima de 1 são ajustados para escala 0-1 (ex.: `25` vira `0.25`).
-3. **Normalização de texto**: `categoria`, `cd_produto` e `ds_produto` são preenchidos com valores padrão (`"Sem Categoria"` ou string vazia) e aparados.
+3. **Normalização de texto**: `categoria`, `cd_produto`, `ds_produto`, `cd_fabricante` e `tp_anuncio` são preenchidos com valores padrão e aparados.
 4. **Métricas derivadas**:
    - `receita_bruta_calc = preco_vendido * qtd_sku`
    - `rob = ROB` quando informado; caso contrário usa `receita_bruta_calc`
@@ -100,8 +103,8 @@ python main.py
 
 Passo a passo:
 1. Informe o número da análise desejada.
-2. Visualize os períodos disponíveis e informe o intervalo (ou pressione Enter para analisar todo o histórico).
-3. Escolha a categoria (ou "Todas" para analisar o portfólio completo).
+2. Visualize os períodos disponíveis e informe o intervalo de datas no formato `DD/MM/AAAA` (ou pressione Enter para analisar todo o histórico, inclusive com comparações diárias).
+3. Escolha a categoria (ou "Todas" para analisar o portfólio completo). Na análise de performance de venda você pode optar entre filtrar por categoria ou informar uma lista de `CD_PRODUTO`.
 4. Para análises que pedem ranking, defina o tamanho desejado (10, 20, 50, 100 ou outro valor positivo).
 5. Na análise de potencial, personalize a janela recente se desejar (quantidade de meses e períodos específicos).
 6. Aguarde a geração e anote o caminho do arquivo exibido no console.
@@ -203,6 +206,22 @@ Passo a passo:
 - `produtos_indicados`: tabela com todas as métricas acima (taxas e margens em `%`), acrescida dos preços mínimos (`preco_min_intervalo`, `preco_min_historico_total`) e ordenada por `potencial_reputacao_score` decrescente.
 
 **Intuito**: priorizar itens que ajudam na percepção de valor da loja ao oferecer produtos baratos, com giro e baixo risco de devolução.
+
+---
+
+### 7.5 Análise de performance de venda (`PRODUCT_FOCUS`)
+
+**Objetivo**: diagnosticar rapidamente o desempenho comercial dentro de um intervalo de datas, seja por categoria ou por uma lista específica de SKUs.
+
+**Como funciona**:
+- Após definir o período, escolha na CLI se deseja filtrar por uma categoria ou informar os `CD_PRODUTO` de interesse.
+- Quando a escolha for por categoria, todo o portfólio filtrado é avaliado; quando optar por `CD_PRODUTO`, somente os SKUs informados são considerados (mesmo que pertençam a categorias distintas).
+- A análise gera três visões complementares:
+   - `resumo_produtos`: consolida o desempenho total no intervalo (receita, pedidos, margem média, ticket médio, devoluções, custo total, lucro estimado) junto com `cd_fabricante` e `tp_anuncio`.
+   - `analise_diaria`: mostra a evolução dia a dia, com métricas de pedidos, quantidade vendida, ticket médio, preços praticados e taxas de devolução.
+   - `analise_mensal`: agrega os mesmos indicadores por mês (`periodo`), útil quando o recorte cobre mais de um mês.
+
+**Intuito**: comparar rapidamente campanhas, reposições, lançamentos ou uma categoria inteira para decidir se a performance está dentro do esperado.
 
 ---
 

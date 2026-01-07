@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 import sys
 import threading
 import time
 from itertools import cycle
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, List
+from typing import Callable, Dict, Optional, Tuple, List, Union
 
 import pandas as pd
 
@@ -13,6 +14,7 @@ from .data_loader import load_sales_dataset
 from .exporters import export_to_excel
 from .reporting.low_cost import build_low_cost_reputation_analysis
 from .reporting.potential import build_potential_sku_analysis
+from .reporting.product_focus import build_product_focus_analysis
 from .reporting.returns import build_return_analysis
 from .reporting.top_history import build_top_history_analysis
 
@@ -81,11 +83,13 @@ class AnalysisOption:
         label: str,
         builder: Callable[..., Dict[str, pd.DataFrame]],
         needs_rank: bool = False,
+        needs_product_codes: bool = False,
     ) -> None:
         self.key = key
         self.label = label
         self.builder = builder
         self.needs_rank = needs_rank
+        self.needs_product_codes = needs_product_codes
 
 
 ANALYSIS_OPTIONS = [
@@ -110,6 +114,12 @@ ANALYSIS_OPTIONS = [
         key="REPUTATION",
         label="Análise de Produto de Custo Baixo para Reputação",
         builder=build_low_cost_reputation_analysis,
+    ),
+    AnalysisOption(
+        key="PRODUCT_FOCUS",
+        label="Análise de performance de venda",
+        builder=build_product_focus_analysis,
+        needs_product_codes=True,
     ),
 ]
 
@@ -136,16 +146,31 @@ def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:
             continue
 
         categories = sorted(df_period["categoria"].dropna().unique())
-        category = _prompt_category(categories)
-        category_filter = None if category == "Todas" else category
+        category_filter: Optional[str] = None
+        df_for_category = df_period.copy()
+        product_codes: Optional[list[str]] = None
 
-        df_for_category = (
-            df_period
-            if category_filter is None
-            else df_period[df_period["categoria"] == category_filter]
-        )
+        if option.needs_product_codes:
+            filter_mode = _prompt_focus_filter_mode()
+            if filter_mode == "category":
+                category = _prompt_category(categories)
+                if category != "Todas":
+                    category_filter = category
+                    df_for_category = df_period[df_period["categoria"] == category_filter].copy()
+            else:
+                product_codes = _prompt_product_codes(df_period)
+                df_for_category = df_period[df_period["cd_produto"].isin(product_codes)].copy()
+        else:
+            category = _prompt_category(categories)
+            if category != "Todas":
+                category_filter = category
+                df_for_category = df_period[df_period["categoria"] == category_filter].copy()
+
         if df_for_category.empty:
-            print("Nenhum registro encontrado com essa combinação de filtros.")
+            if product_codes is not None:
+                print("Nenhum registro encontrado para os códigos informados. Tente novamente.")
+            else:
+                print("Nenhum registro encontrado com essa combinação de filtros.")
             continue
 
         extra_args: Dict[str, object] = {}
@@ -157,6 +182,9 @@ def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:
 
         if option.key == "POTENTIAL":
             extra_args.update(_prompt_potential_window(df_for_category))
+
+        if product_codes is not None:
+            extra_args["product_codes"] = product_codes
 
         dataframes = option.builder(df_period, category_filter, **extra_args)
 
@@ -224,6 +252,47 @@ def _prompt_continue() -> bool:
     return answer == "s"
 
 
+def _prompt_product_codes(df: pd.DataFrame) -> list[str]:
+    available_series = df.get("cd_produto", pd.Series(dtype=str))
+    available = sorted({str(code).strip() for code in available_series.dropna() if str(code).strip()})
+    if available:
+        preview = ", ".join(available[:10])
+        suffix = "..." if len(available) > 10 else ""
+        print("\nInforme os códigos de produto (CD_PRODUTO) separados por vírgula ou ponto e vírgula.")
+        print(f"Exemplos disponíveis: {preview}{suffix}")
+    else:
+        print("\nInforme os códigos de produto (CD_PRODUTO) separados por vírgula ou ponto e vírgula.")
+        print("Nenhum código disponível no filtro atual, mas você ainda pode informar manualmente.")
+
+    while True:
+        raw = input("CD_PRODUTO(s): ").strip()
+        parts = [part.strip() for part in re.split(r"[;,]", raw) if part.strip()]
+        if not parts:
+            print("Informe ao menos um código de produto válido.")
+            continue
+        unique_codes = list(dict.fromkeys(parts))
+        missing = [code for code in unique_codes if code not in available]
+        if missing and available:
+            print(
+                "Aviso: alguns códigos não foram encontrados no filtro atual e serão considerados mesmo assim: "
+                + ", ".join(missing)
+            )
+        return unique_codes
+
+
+def _prompt_focus_filter_mode() -> str:
+    print("\nComo deseja filtrar esta análise?")
+    print(" 1. Filtrar por categoria")
+    print(" 2. Informar lista de CD_PRODUTO")
+    while True:
+        choice = input("Opção: ").strip()
+        if choice == "1":
+            return "category"
+        if choice == "2":
+            return "products"
+        print("Informe 1 ou 2 para selecionar o modo de filtro.")
+
+
 def _compute_historical_lowest_prices(df: pd.DataFrame) -> Dict[str, float]:
     valid = df.loc[df["preco_vendido"].notna()]
     return (
@@ -233,54 +302,80 @@ def _compute_historical_lowest_prices(df: pd.DataFrame) -> Dict[str, float]:
     )
 
 
-def _prompt_period_range(df: pd.DataFrame) -> Optional[Tuple[pd.Period, pd.Period]]:
+def _prompt_period_range(df: pd.DataFrame) -> Optional[Tuple[pd.Timestamp, pd.Timestamp]]:
+    base_series = df.get("data", pd.Series(dtype="datetime64[ns]"))
+    available_dates = pd.to_datetime(base_series, errors="coerce")
+    available_dates = available_dates.dropna().sort_values()
+    if available_dates.empty:
+        return None
+
+    min_date = available_dates.iloc[0]
+    max_date = available_dates.iloc[-1]
+
     periods = sorted(
         p for p in df["periodo"].dropna().unique() if isinstance(p, pd.Period)
     )
-    if not periods:
-        return None
+    if periods:
+        _display_available_periods(periods)
 
-    _display_available_periods(periods)
-    print("Informe o intervalo desejado no formato AAAA-MM. Pressione Enter para analisar todo o histórico.")
+    print(
+        f"Intervalo disponível: {min_date.strftime('%d/%m/%Y')} até {max_date.strftime('%d/%m/%Y')}"
+    )
+    print(
+        "Informe o intervalo desejado no formato DD/MM/AAAA. Pressione Enter para analisar todo o histórico."
+    )
 
     while True:
-        start_input = input("Período inicial (AAAA-MM) ou Enter: ").strip()
+        start_input = input("Data inicial (DD/MM/AAAA) ou Enter: ").strip()
         if not start_input:
             return None
-        end_input = input("Período final (AAAA-MM): ").strip()
+        end_input = input("Data final (DD/MM/AAAA): ").strip()
 
-        start_period = _parse_period_input(start_input)
-        end_period = _parse_period_input(end_input)
+        start_date = _parse_date_input(start_input)
+        end_date = _parse_date_input(end_input)
 
-        if not start_period or not end_period:
-            print("Formato inválido. Use AAAA-MM, por exemplo 2025-01.")
+        if start_date is None or end_date is None:
+            print("Formato inválido. Use DD/MM/AAAA, por exemplo 25/01/2025.")
             continue
 
-        if start_period not in periods or end_period not in periods:
-            print("Período fora do intervalo disponível. Escolha novamente.")
+        start_date = start_date.normalize()
+        end_date = end_date.normalize()
+
+        if start_date < min_date.normalize() or end_date > max_date.normalize():
+            print("Datas fora do intervalo disponível. Escolha novamente.")
             continue
 
-        if start_period > end_period:
-            print("Período inicial deve ser menor ou igual ao período final.")
+        if start_date > end_date:
+            print("Data inicial deve ser menor ou igual à final.")
             continue
 
-        return start_period, end_period
+        return start_date, end_date
 
 
 def _apply_period_range(
-    df: pd.DataFrame, period_range: Optional[Tuple[pd.Period, pd.Period]]
+    df: pd.DataFrame, period_range: Optional[Tuple[pd.Timestamp, pd.Timestamp]]
 ) -> pd.DataFrame:
     if not period_range:
         return df.copy()
     start, end = period_range
-    mask = df["periodo"].between(start, end)
+    if "data" in df.columns:
+        data_series = pd.to_datetime(df["data"], errors="coerce")
+        mask = data_series.between(start, end)
+        return df.loc[mask].copy()
+    mask = df["periodo"].between(start.to_period("M"), end.to_period("M"))
     return df.loc[mask].copy()
 
 
-def _format_period_suffix(period_range: Optional[Tuple[pd.Period, pd.Period]]) -> str:
+def _format_period_suffix(
+    period_range: Optional[
+        Tuple[Union[pd.Timestamp, pd.Period], Union[pd.Timestamp, pd.Period]]
+    ]
+) -> str:
     if not period_range:
         return "historico_completo"
     start, end = period_range
+    if isinstance(start, pd.Timestamp):
+        return f"{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}"
     return f"{start.strftime('%Y%m')}_{end.strftime('%Y%m')}"
 
 
@@ -319,6 +414,17 @@ def _parse_period_input(value: str) -> Optional[pd.Period]:
         return pd.Period(normalized, freq="M")
     except (ValueError, TypeError):
         return None
+
+
+def _parse_date_input(value: str) -> Optional[pd.Timestamp]:
+    normalized = value.strip()
+    if not normalized:
+        return None
+    normalized = normalized.replace("-", "/")
+    parsed = pd.to_datetime(normalized, dayfirst=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed
 
 
 def _prompt_potential_window(df: pd.DataFrame) -> Dict[str, object]:

@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 
 COLUMN_MAP = {
     "ANO_MES": "ano_mes",
+    "DATA": "data",
     "NR_NOTA_FISCAL": "nr_nota_fiscal",
     "CATEGORIA": "categoria",
     "CD_PRODUTO": "cd_produto",
@@ -24,6 +25,8 @@ COLUMN_MAP = {
     "Custo do produto": "custo_produto",
     "Qtd Produto Devolvido": "qtd_devolvido",
     "Devolução Receita Bruta Tot$": "devolucao_receita_bruta",
+    "CD_FABRICANTE": "cd_fabricante",
+    "TP_ANUNCIO": "tp_anuncio",
 }
 
 NUMERIC_COLUMNS = [
@@ -154,7 +157,10 @@ class SalesDataLoader:
                     "CD_PRODUTO": str,
                     "DS_PRODUTO": str,
                     "ANO_MES": str,
+                    "DATA": str,
                     "NR_NOTA_FISCAL": str,
+                    "CD_FABRICANTE": str,
+                    "TP_ANUNCIO": str,
                 },
             )
             frames.append(self._normalize_columns(raw))
@@ -241,12 +247,24 @@ class SalesDataLoader:
         return df
 
     def _enrich(self, df: pd.DataFrame) -> pd.DataFrame:
-        if "ano_mes" in df.columns:
+        data_series = None
+        if "data" in df.columns:
+            parsed_dates = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
+            data_series = parsed_dates.dt.normalize()
+            df["data"] = data_series
+        elif "ano_mes" in df.columns:
             cleaned = df["ano_mes"].astype(str).str.replace(" ", "", regex=False)
             cleaned = cleaned.str.replace(r"[^0-9]", "", regex=True)
             cleaned = cleaned.where(cleaned.str.len() == 6)
             df["ano_mes"] = cleaned
-            df["periodo"] = pd.to_datetime(df["ano_mes"], format="%Y%m", errors="coerce").dt.to_period("M")
+            data_series = pd.to_datetime(df["ano_mes"], format="%Y%m", errors="coerce")
+            df["data"] = data_series
+
+        if data_series is not None:
+            data_series = data_series.dt.normalize()
+            df["data"] = data_series
+            df["ano_mes"] = data_series.dt.strftime("%Y%m")
+            df["periodo"] = data_series.dt.to_period("M")
         else:
             df["periodo"] = pd.NaT
 
@@ -265,6 +283,14 @@ class SalesDataLoader:
         if "nr_nota_fiscal" not in df.columns:
             df["nr_nota_fiscal"] = ""
         df["nr_nota_fiscal"] = df["nr_nota_fiscal"].fillna("").astype(str).str.strip()
+
+        if "cd_fabricante" not in df.columns:
+            df["cd_fabricante"] = ""
+        df["cd_fabricante"] = df["cd_fabricante"].fillna("").astype(str).str.strip()
+
+        if "tp_anuncio" not in df.columns:
+            df["tp_anuncio"] = "Nao informado"
+        df["tp_anuncio"] = df["tp_anuncio"].fillna("Nao informado").astype(str).str.strip()
 
         qtd_sku = df["qtd_sku"] if "qtd_sku" in df.columns else pd.Series(0, index=df.index, dtype=float)
         preco_vendido = df["preco_vendido"] if "preco_vendido" in df.columns else pd.Series(0, index=df.index, dtype=float)
