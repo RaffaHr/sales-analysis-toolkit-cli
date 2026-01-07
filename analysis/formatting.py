@@ -17,9 +17,10 @@ def format_percentage_columns(df: pd.DataFrame, columns: Iterable[str]) -> pd.Da
 
 def _format_percentage_value(value: object) -> str:
     if pd.isna(value):
-        return "0.00%"
+        return "0,00%"
     try:
         numeric_value = float(value)
     except (TypeError, ValueError):
         return str(value)
-    return f"{numeric_value * 100:.2f}%"
+    formatted = f"{numeric_value * 100:.2f}%"
+    return formatted.replace(".", ",")

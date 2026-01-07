@@ -42,8 +42,6 @@ def build_product_focus_analysis(
         group_cols=["data", "cd_produto", "ds_produto", "cd_fabricante", "tp_anuncio"],
     )
     analise_diaria.sort_values(["data", "cd_produto"], inplace=True)
-    if not analise_diaria.empty:
-        analise_diaria["data"] = pd.to_datetime(analise_diaria["data"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     analise_mensal = _aggregate_metrics(
         focus,
@@ -55,7 +53,6 @@ def build_product_focus_analysis(
     resumo_fmt = format_percentage_columns(resumo, ["margem_media", "taxa_devolucao"])
     diaria_fmt = format_percentage_columns(analise_diaria, ["margem_media", "taxa_devolucao"])
     mensal_fmt = format_percentage_columns(analise_mensal, ["margem_media", "taxa_devolucao"])
-
     return {
         "resumo_produtos": resumo_fmt,
         "analise_diaria": diaria_fmt,

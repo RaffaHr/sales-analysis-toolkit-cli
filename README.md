@@ -40,7 +40,7 @@ analysis/
    ```powershell
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
-   pip install pandas openpyxl numpy
+   pip install pandas openpyxl numpy xlsxwriter
    ```
 
 3. Arquivo `BASE.xlsx` na raiz do projeto com a aba `VENDA` (ou divisões `VENDA01`, `VENDA02`, ...) e colunas abaixo.
@@ -220,6 +220,7 @@ Passo a passo:
    - `resumo_produtos`: consolida o desempenho total no intervalo (receita, pedidos, margem média, ticket médio, devoluções, custo total, lucro estimado) junto com `cd_fabricante` e `tp_anuncio`.
    - `analise_diaria`: mostra a evolução dia a dia, com métricas de pedidos, quantidade vendida, ticket médio, preços praticados e taxas de devolução.
    - `analise_mensal`: agrega os mesmos indicadores por mês (`periodo`), útil quando o recorte cobre mais de um mês.
+- A aba `analise_diaria` inclui um gráfico com eixo secundário que cruza pedidos x margem. Use a lista suspensa ao lado do gráfico para escolher o `CD_PRODUTO`; as colunas auxiliares usam `FILTRO` para atualizar dinamicamente os dados que alimentam o gráfico.
 
 **Intuito**: comparar rapidamente campanhas, reposições, lançamentos ou uma categoria inteira para decidir se a performance está dentro do esperado.
 

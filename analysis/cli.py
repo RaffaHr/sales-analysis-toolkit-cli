@@ -6,7 +6,7 @@ import threading
 import time
 from itertools import cycle
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, List, Union
+from typing import Any, Callable, Dict, Optional, Tuple, List, Union, Set
 
 import pandas as pd
 
@@ -188,10 +188,15 @@ def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:
 
         dataframes = option.builder(df_period, category_filter, **extra_args)
 
+        export_payload = dict(dataframes)
+        chart_configs = _prompt_chart_configs(option, dataframes)
+        if chart_configs:
+            export_payload["__charts__"] = chart_configs
+
         base_name = option.key
         if period_range:
             base_name = f"{base_name}_{_format_period_suffix(period_range)}"
-        output_file = export_to_excel(dataframes, base_name)
+        output_file = export_to_excel(export_payload, base_name)
         print(f"Arquivo gerado: {output_file}")
 
         if not _prompt_continue():
@@ -291,6 +296,314 @@ def _prompt_focus_filter_mode() -> str:
         if choice == "2":
             return "products"
         print("Informe 1 ou 2 para selecionar o modo de filtro.")
+
+
+def _prompt_yes_no(message: str) -> bool:
+    while True:
+        answer = input(message).strip().lower()
+        if answer in {"s", "sim"}:
+            return True
+        if answer in {"n", "nao", "não"}:
+            return False
+        print("Responda com 's' ou 'n'.")
+
+
+def _prompt_chart_configs(
+    option: AnalysisOption,
+    dataframes: Dict[str, pd.DataFrame],
+) -> List[Dict[str, object]]:
+    if not dataframes:
+        return []
+    if not _prompt_yes_no("\nDeseja gerar gráficos neste relatório? (s/n): "):
+        return []
+
+    configs: List[Dict[str, object]] = []
+    for sheet_name, df in dataframes.items():
+        if sheet_name.startswith("__") or df.empty:
+            continue
+        if "cd_produto" not in df.columns:
+            print(f"Aba '{sheet_name}' não possui coluna 'cd_produto'; gráfico não será criado.")
+            continue
+        if not _prompt_yes_no(f"\nGerar gráfico para a aba '{sheet_name}'? (s/n): "):
+            continue
+
+        columns_info = _infer_columns_info(df)
+        if not columns_info:
+            print("Não foi possível identificar colunas válidas para gráficos.")
+            continue
+
+        if _prompt_yes_no("Deseja personalizar o gráfico desta aba? (s/n): "):
+            config_core = _build_custom_chart_config(sheet_name, df, columns_info)
+        else:
+            config_core = _build_default_chart_config(option.key, sheet_name, df, columns_info)
+
+        if not config_core:
+            print("Configuração de gráfico ignorada para esta aba.")
+            continue
+
+        config_core.update(
+            {
+                "sheet": sheet_name,
+                "filter_column": "cd_produto",
+                "dropdown_label": "Selecione o produto:",
+                "dataframe": df,
+                "columns_info": columns_info,
+            }
+        )
+        configs.append(config_core)
+
+    return configs
+
+
+def _infer_columns_info(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+    info: Dict[str, Dict[str, Any]] = {}
+    percent_pattern = re.compile(r"^-?\d+(?:[.,]\d+)?%$")
+    numeric_pattern = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+    date_patterns = [
+        re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$"),
+        re.compile(r"^\d{4}-\d{2}-\d{2}$"),
+    ]
+
+    for column in df.columns:
+        series = df[column]
+        kind = "text"
+        convert_to_date = False
+        if pd.api.types.is_datetime64_any_dtype(series):
+            kind = "date"
+        elif pd.api.types.is_numeric_dtype(series):
+            kind = "numeric"
+        else:
+            sample = series.dropna().astype(str)
+            if sample.empty:
+                kind = "text"
+            elif sample.str.match(percent_pattern).all():
+                kind = "percentage_text"
+            elif sample.str.match(numeric_pattern).all():
+                kind = "numeric_text"
+            elif any(sample.str.match(pattern).all() for pattern in date_patterns):
+                kind = "date"
+                convert_to_date = True
+            else:
+                kind = "text"
+        entry: Dict[str, Any] = {"kind": kind}
+        if convert_to_date:
+            entry["convert_to_date"] = True
+        info[column] = entry
+    return info
+
+
+def _build_default_chart_config(
+    option_key: str,
+    sheet_name: str,
+    df: pd.DataFrame,
+    columns_info: Dict[str, Dict[str, str]],
+) -> Optional[Dict[str, object]]:
+    if "cd_produto" not in df.columns:
+        return None
+
+    x_candidates = ["data", "periodo", "mes", "ano_mes"]
+    x_column = next((col for col in x_candidates if col in df.columns), None)
+    if x_column is None:
+        x_column = df.columns[0]
+
+    numeric_kinds = {"numeric", "numeric_text", "percentage", "percentage_text"}
+    pedido_columns = [col for col in df.columns if "pedid" in col.lower()]
+    y_column = next((col for col in pedido_columns if columns_info.get(col, {}).get("kind") in numeric_kinds), None)
+    if y_column is None and option_key == "RETURN":
+        devol_columns = [col for col in df.columns if "devol" in col.lower()]
+        y_column = next((col for col in devol_columns if columns_info.get(col, {}).get("kind") in numeric_kinds), None)
+    if y_column is None:
+        y_column = next(
+            (col for col, meta in columns_info.items() if meta.get("kind") in numeric_kinds and col != x_column),
+            None,
+        )
+    if y_column is None:
+        print(f"Aba '{sheet_name}': não há coluna numérica disponível para o eixo Y.")
+        return None
+
+    y_label = "Pedidos" if "pedid" in y_column.lower() else y_column
+    if option_key == "RETURN" and "devol" in y_column.lower():
+        y_label = "Pedidos devolvidos"
+
+    return {
+        "chart_type": "column",
+        "x_column": x_column,
+        "primary_series": [{"column": y_column, "label": y_label}],
+        "secondary_series": [],
+        "title": f"{sheet_name} - {y_label}",
+        "x_axis_label": x_column.upper(),
+        "y_axis_label": y_label,
+        "y2_axis_label": "",
+    }
+
+
+def _build_custom_chart_config(
+    sheet_name: str,
+    df: pd.DataFrame,
+    columns_info: Dict[str, Dict[str, str]],
+) -> Optional[Dict[str, object]]:
+    chart_option = _prompt_chart_type()
+    if chart_option is None:
+        return None
+
+    columns = list(df.columns)
+    _display_columns(columns, columns_info)
+
+    x_selection = _prompt_column_selection(
+        columns,
+        columns_info,
+        "Selecione a coluna para o eixo X (número ou nome): ",
+        allow_multiple=False,
+    )
+    if not x_selection:
+        return None
+    x_column = x_selection[0]
+
+    numeric_kinds = {"numeric", "numeric_text", "percentage", "percentage_text"}
+    primary_selection = _prompt_column_selection(
+        columns,
+        columns_info,
+        "Informe as colunas para o eixo Y principal (separe por vírgula): ",
+        allow_multiple=chart_option.get("allow_multiple_primary", True),
+        allowed_kinds=numeric_kinds,
+    )
+    if not primary_selection:
+        print("É necessário informar ao menos uma coluna numérica para o eixo Y.")
+        return None
+
+    secondary_selection: List[str] = []
+    if chart_option.get("supports_secondary"):
+        if _prompt_yes_no("Deseja informar colunas para o eixo Y secundário? (s/n): "):
+            secondary_selection = _prompt_column_selection(
+                columns,
+                columns_info,
+                "Informe as colunas para o eixo secundário (separe por vírgula): ",
+                allow_multiple=True,
+                allowed_kinds=numeric_kinds,
+            )
+            if not secondary_selection:
+                print("Nenhuma coluna válida selecionada para o eixo secundário.")
+
+    primary_series = [{"column": col, "label": col} for col in primary_selection]
+    secondary_series = [{"column": col, "label": col} for col in secondary_selection]
+    if chart_option.get("secondary_type") and secondary_series:
+        for series in secondary_series:
+            series["chart_type"] = chart_option["secondary_type"]
+
+    default_title = f"{sheet_name} - {chart_option['label']}"
+    default_y_label = primary_selection[0]
+    default_y2_label = secondary_selection[0] if secondary_selection else ""
+
+    if _prompt_yes_no("Deseja definir título e rótulos personalizados? (s/n): "):
+        title = input("Título (Enter para padrão): ").strip() or default_title
+        x_axis_label = input("Rótulo do eixo X (Enter para usar o nome da coluna): ").strip() or x_column.upper()
+        y_axis_label = input("Rótulo do eixo Y (Enter para usar o nome da coluna): ").strip() or default_y_label
+        y2_axis_label = ""
+        if secondary_series:
+            y2_axis_label = input("Rótulo do eixo Y secundário (Enter para padrão): ").strip() or default_y2_label
+    else:
+        title = default_title
+        x_axis_label = x_column.upper()
+        y_axis_label = default_y_label
+        y2_axis_label = default_y2_label
+
+    return {
+        "chart_type": chart_option["chart_type"],
+        "secondary_chart_type": chart_option.get("secondary_type"),
+        "x_column": x_column,
+        "primary_series": primary_series,
+        "secondary_series": secondary_series,
+        "title": title,
+        "x_axis_label": x_axis_label,
+        "y_axis_label": y_axis_label,
+        "y2_axis_label": y2_axis_label,
+    }
+
+
+def _prompt_chart_type() -> Optional[Dict[str, object]]:
+    options = {
+        "1": {"label": "Colunas", "chart_type": "column", "allow_multiple_primary": True, "supports_secondary": False},
+        "2": {"label": "Linhas", "chart_type": "line", "allow_multiple_primary": True, "supports_secondary": False},
+        "3": {"label": "Pizza", "chart_type": "pie", "allow_multiple_primary": False, "supports_secondary": False},
+        "4": {"label": "Barras", "chart_type": "bar", "allow_multiple_primary": True, "supports_secondary": False},
+        "5": {"label": "Área", "chart_type": "area", "allow_multiple_primary": True, "supports_secondary": False},
+        "6": {"label": "Combinação (coluna + linha)", "chart_type": "column", "allow_multiple_primary": True, "supports_secondary": True, "secondary_type": "line"},
+    }
+    print("\nSelecione o tipo de gráfico (alguns tipos avançados como histograma ou funil não são suportados pelo mecanismo atual):")
+    for key, cfg in options.items():
+        print(f" {key}. {cfg['label']}")
+    while True:
+        choice = input("Tipo de gráfico: ").strip()
+        if choice in options:
+            return options[choice]
+        print("Escolha uma opção válida.")
+
+
+def _display_columns(columns: List[str], columns_info: Dict[str, Dict[str, str]]) -> None:
+    print("\nColunas disponíveis:")
+    for idx, column in enumerate(columns, start=1):
+        kind = columns_info.get(column, {}).get("kind", "desconhecido")
+        print(f" {idx}. {column} ({_describe_column_kind(kind)})")
+
+
+def _describe_column_kind(kind: str) -> str:
+    mapping = {
+        "numeric": "numérico",
+        "numeric_text": "texto numérico",
+        "percentage": "percentual",
+        "percentage_text": "percentual (texto)",
+        "date": "data",
+        "text": "texto",
+    }
+    return mapping.get(kind, kind)
+
+
+def _prompt_column_selection(
+    columns: List[str],
+    columns_info: Dict[str, Dict[str, str]],
+    message: str,
+    *,
+    allow_multiple: bool,
+    allowed_kinds: Optional[Set[str]] = None,
+) -> List[str]:
+    while True:
+        raw = input(message).strip()
+        if not raw:
+            return []
+        selections = [item.strip() for item in raw.split(",") if item.strip()]
+        resolved: List[str] = []
+        invalid_choice = False
+        for selection in selections:
+            column = _resolve_column_name(selection, columns)
+            if column is None:
+                print(f"Coluna '{selection}' não encontrada.")
+                invalid_choice = True
+                break
+            kind = columns_info.get(column, {}).get("kind")
+            if allowed_kinds and kind not in allowed_kinds:
+                print(f"Coluna '{column}' não é numérica e não pode ser usada neste eixo.")
+                invalid_choice = True
+                break
+            if column not in resolved:
+                resolved.append(column)
+        if invalid_choice:
+            continue
+        if not allow_multiple and len(resolved) > 1:
+            print("Selecione apenas uma coluna para este eixo.")
+            continue
+        return resolved
+
+
+def _resolve_column_name(selection: str, columns: List[str]) -> Optional[str]:
+    if selection.isdigit():
+        index = int(selection) - 1
+        if 0 <= index < len(columns):
+            return columns[index]
+        return None
+    matches = [column for column in columns if column.lower() == selection.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _compute_historical_lowest_prices(df: pd.DataFrame) -> Dict[str, float]:
