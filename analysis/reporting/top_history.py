@@ -20,12 +20,12 @@ def build_top_history_analysis(
     data = _filter_by_category(df, category)
 
     interval_prices = (
-        data.groupby("cd_produto")["preco_vendido"].min()
+        data.groupby("cd_anuncio")["preco_vendido"].min()
         .replace([np.inf, -np.inf], np.nan)
     )
 
     monthly = (
-        data.groupby(["periodo", "cd_produto", "ds_produto"], as_index=False)
+        data.groupby(["periodo", "cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             qtd_vendida=("qtd_sku", "sum"),
             pedidos=("nr_nota_fiscal", "nunique"),
@@ -44,7 +44,7 @@ def build_top_history_analysis(
     monthly["preco_min_periodo"] = monthly["preco_min_periodo"].round(2)
 
     summary = (
-        data.groupby(["cd_produto", "ds_produto"], as_index=False)
+        data.groupby(["cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             meses_com_venda=("periodo", "nunique"),
             quantidade_total=("qtd_sku", "sum"),
@@ -79,21 +79,21 @@ def build_top_history_analysis(
         0,
     ).round(2)
     ranking["preco_min_intervalo"] = pd.to_numeric(
-        ranking["cd_produto"].map(interval_prices), errors="coerce"
+        ranking["cd_anuncio"].map(interval_prices), errors="coerce"
     ).round(2)
     if historical_prices:
         ranking["preco_min_historico_total"] = pd.to_numeric(
-            ranking["cd_produto"].map(historical_prices), errors="coerce"
+            ranking["cd_anuncio"].map(historical_prices), errors="coerce"
         ).round(2)
     else:
         ranking["preco_min_historico_total"] = np.nan
 
-    detalhes = monthly[monthly["cd_produto"].isin(ranking["cd_produto"])].copy()
+    detalhes = monthly[monthly["cd_anuncio"].isin(ranking["cd_anuncio"])].copy()
     detalhes["preco_min_historico_total"] = pd.to_numeric(
-        detalhes["cd_produto"].map(historical_prices), errors="coerce"
+        detalhes["cd_anuncio"].map(historical_prices), errors="coerce"
     ).round(2) if historical_prices else np.nan
     detalhes["preco_min_intervalo"] = pd.to_numeric(
-        detalhes["cd_produto"].map(interval_prices), errors="coerce"
+        detalhes["cd_anuncio"].map(interval_prices), errors="coerce"
     ).round(2)
 
     ranking_fmt = format_percentage_columns(

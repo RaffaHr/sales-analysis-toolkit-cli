@@ -170,7 +170,7 @@ def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:
                 product_codes = _prompt_product_codes(df_period)
                 df_for_category = _copy_with_attrs(
                     df_period,
-                    df_period[df_period["cd_produto"].isin(product_codes)].copy(),
+                    df_period[df_period["cd_anuncio"].isin(product_codes)].copy(),
                 )
         else:
             category = _prompt_category(categories)
@@ -270,22 +270,22 @@ def _prompt_continue() -> bool:
 
 
 def _prompt_product_codes(df: pd.DataFrame) -> list[str]:
-    available_series = df.get("cd_produto", pd.Series(dtype=str))
+    available_series = df.get("cd_anuncio", pd.Series(dtype=str))
     available = sorted({str(code).strip() for code in available_series.dropna() if str(code).strip()})
     if available:
         preview = ", ".join(available[:10])
         suffix = "..." if len(available) > 10 else ""
-        print("\nInforme os códigos de produto (CD_PRODUTO) separados por vírgula ou ponto e vírgula.")
+        print("\nInforme os códigos de anúncio (CD_ANUNCIO) separados por vírgula ou ponto e vírgula.")
         print(f"Exemplos disponíveis: {preview}{suffix}")
     else:
-        print("\nInforme os códigos de produto (CD_PRODUTO) separados por vírgula ou ponto e vírgula.")
+        print("\nInforme os códigos de anúncio (CD_ANUNCIO) separados por vírgula ou ponto e vírgula.")
         print("Nenhum código disponível no filtro atual, mas você ainda pode informar manualmente.")
 
     while True:
-        raw = input("CD_PRODUTO(s): ").strip()
+        raw = input("CD_ANUNCIO(s): ").strip()
         parts = [part.strip() for part in re.split(r"[;,]", raw) if part.strip()]
         if not parts:
-            print("Informe ao menos um código de produto válido.")
+            print("Informe ao menos um código de anúncio válido.")
             continue
         unique_codes = list(dict.fromkeys(parts))
         missing = [code for code in unique_codes if code not in available]
@@ -300,7 +300,7 @@ def _prompt_product_codes(df: pd.DataFrame) -> list[str]:
 def _prompt_focus_filter_mode() -> str:
     print("\nComo deseja filtrar esta análise?")
     print(" 1. Filtrar por categoria")
-    print(" 2. Informar lista de CD_PRODUTO")
+    print(" 2. Informar lista de CD_ANUNCIO")
     while True:
         choice = input("Opção: ").strip()
         if choice == "1":
@@ -315,7 +315,7 @@ def _prompt_focus_filter_mode() -> str:
 def _compute_historical_lowest_prices(df: pd.DataFrame) -> Dict[str, float]:
     valid = df.loc[df["preco_vendido"].notna()]
     return (
-        valid.groupby("cd_produto")["preco_vendido"].min()
+        valid.groupby("cd_anuncio")["preco_vendido"].min()
         .round(2)
         .to_dict()
     )

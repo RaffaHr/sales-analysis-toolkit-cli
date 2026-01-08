@@ -47,11 +47,11 @@ def build_potential_sku_analysis(
     """
     data = _filter_by_category(df, category)
     interval_prices = (
-        data.groupby("cd_produto")["preco_vendido"].min()
+        data.groupby("cd_anuncio")["preco_vendido"].min()
         .replace([np.inf, -np.inf], np.nan)
     )
     grouped = (
-        data.groupby(["periodo", "cd_produto", "ds_produto"], as_index=False)
+        data.groupby(["periodo", "cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             qtd_vendida=("qtd_sku", "sum"),
             pedidos=("nr_nota_fiscal", "nunique"),
@@ -92,7 +92,7 @@ def build_potential_sku_analysis(
 
     stats = historical.merge(
         recent,
-        on=["cd_produto", "ds_produto"],
+        on=["cd_anuncio", "ds_anuncio"],
         how="left",
     ).fillna(0)
 
@@ -136,8 +136,8 @@ def build_potential_sku_analysis(
     if selecionados.empty:
         historico_focado = grouped.head(0)
     else:
-        foco = selecionados["cd_produto"].unique()
-        historico_focado = grouped[grouped["cd_produto"].isin(foco)].copy()
+        foco = selecionados["cd_anuncio"].unique()
+        historico_focado = grouped[grouped["cd_anuncio"].isin(foco)].copy()
 
     historico_focado["preco_medio_vendido"] = np.where(
         historico_focado["qtd_vendida"] > 0,
@@ -146,17 +146,17 @@ def build_potential_sku_analysis(
     ).round(2)
 
     selecionados["preco_min_intervalo"] = pd.to_numeric(
-        selecionados["cd_produto"].map(interval_prices), errors="coerce"
+        selecionados["cd_anuncio"].map(interval_prices), errors="coerce"
     ).round(2)
     historico_focado["preco_min_intervalo"] = pd.to_numeric(
-        historico_focado["cd_produto"].map(interval_prices), errors="coerce"
+        historico_focado["cd_anuncio"].map(interval_prices), errors="coerce"
     ).round(2)
     if historical_prices:
         selecionados["preco_min_historico_total"] = pd.to_numeric(
-            selecionados["cd_produto"].map(historical_prices), errors="coerce"
+            selecionados["cd_anuncio"].map(historical_prices), errors="coerce"
         ).round(2)
         historico_focado["preco_min_historico_total"] = pd.to_numeric(
-            historico_focado["cd_produto"].map(historical_prices), errors="coerce"
+            historico_focado["cd_anuncio"].map(historical_prices), errors="coerce"
         ).round(2)
     else:
         selecionados["preco_min_historico_total"] = np.nan
@@ -184,8 +184,8 @@ def _aggregate_window(df: pd.DataFrame, periods: np.ndarray, suffix: str) -> pd.
     if len(periods) == 0:
         return pd.DataFrame(
             columns=[
-                "cd_produto",
-                "ds_produto",
+                "cd_anuncio",
+                "ds_anuncio",
                 f"qtd_vendida_media_{suffix}",
                 f"receita_media_{suffix}",
                 f"pedidos_medios_{suffix}",
@@ -203,7 +203,7 @@ def _aggregate_window(df: pd.DataFrame, periods: np.ndarray, suffix: str) -> pd.
         0,
     )
     aggregated = (
-        filtered.groupby(["cd_produto", "ds_produto"], as_index=False)
+        filtered.groupby(["cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             qtd_vendida_media=("qtd_vendida", "mean"),
             receita_media=("receita", "mean"),

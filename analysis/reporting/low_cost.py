@@ -24,12 +24,12 @@ def build_low_cost_reputation_analysis(
     data = _filter_by_category(df, category)
 
     interval_prices = (
-        data.groupby("cd_produto")["preco_vendido"].min()
+        data.groupby("cd_anuncio")["preco_vendido"].min()
         .replace([np.inf, -np.inf], np.nan)
     )
 
     aggregated = (
-        data.groupby(["cd_produto", "ds_produto"], as_index=False)
+        data.groupby(["cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             quantidade_total=("qtd_sku", "sum"),
             pedidos_total=("nr_nota_fiscal", "nunique"),
@@ -84,11 +84,11 @@ def build_low_cost_reputation_analysis(
     )
 
     selecionados["preco_min_intervalo"] = pd.to_numeric(
-        selecionados["cd_produto"].map(interval_prices), errors="coerce"
+        selecionados["cd_anuncio"].map(interval_prices), errors="coerce"
     ).round(2)
     if historical_prices:
         selecionados["preco_min_historico_total"] = pd.to_numeric(
-            selecionados["cd_produto"].map(historical_prices), errors="coerce"
+            selecionados["cd_anuncio"].map(historical_prices), errors="coerce"
         ).round(2)
     else:
         selecionados["preco_min_historico_total"] = np.nan

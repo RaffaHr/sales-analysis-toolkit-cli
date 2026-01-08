@@ -13,6 +13,8 @@ SALES_COLUMN_MAP = {
     "DATA_VENDA": "data",
     "NOTA_FISCAL_VENDA": "nr_nota_fiscal",
     "CATEGORIA": "categoria",
+    "CD_ANUNCIO": "cd_anuncio",
+    "DS_ANUNCIO": "ds_anuncio",
     "CD_PRODUTO": "cd_produto",
     "CD_FABRICANTE": "cd_fabricante",
     "DS_PRODUTO": "ds_produto",
@@ -33,6 +35,8 @@ RETURN_COLUMN_MAP = {
     "NOTA_FISCAL_VENDA": "nr_nota_fiscal",
     "NOTA_FISCAL_DEVOLUCAO": "nr_nota_devolucao",
     "CATEGORIA": "categoria",
+    "CD_ANUNCIO": "cd_anuncio",
+    "DS_ANUNCIO": "ds_anuncio",
     "CD_PRODUTO": "cd_produto",
     "CD_FABRICANTE": "cd_fabricante",
     "DS_PRODUTO": "ds_produto",
@@ -49,6 +53,8 @@ RETURN_COLUMN_MAP = {
 SALES_DTYPES = {
     "NOTA_FISCAL_VENDA": str,
     "CATEGORIA": str,
+    "CD_ANUNCIO": str,
+    "DS_ANUNCIO": str,
     "CD_PRODUTO": str,
     "CD_FABRICANTE": str,
     "DS_PRODUTO": str,
@@ -67,6 +73,8 @@ RETURN_DTYPES = {
     "NOTA_FISCAL_VENDA": str,
     "NOTA_FISCAL_DEVOLUCAO": str,
     "CATEGORIA": str,
+    "CD_ANUNCIO": str,
+    "DS_ANUNCIO": str,
     "CD_PRODUTO": str,
     "CD_FABRICANTE": str,
     "DS_PRODUTO": str,
@@ -296,6 +304,8 @@ class SalesDataLoader:
 
         text_defaults = {
             "categoria": "Sem Categoria",
+            "cd_anuncio": "",
+            "ds_anuncio": "",
             "cd_produto": "",
             "ds_produto": "",
             "cd_fabricante": "",
@@ -310,6 +320,13 @@ class SalesDataLoader:
             if default == "":
                 df[column] = df[column].replace("nan", "")
 
+        if "cd_anuncio" not in df.columns:
+            df["cd_anuncio"] = df.get("cd_produto", "")
+        if "ds_anuncio" not in df.columns:
+            df["ds_anuncio"] = df.get("ds_produto", "")
+        df["cd_anuncio"] = df["cd_anuncio"].astype(str).str.strip()
+        df["ds_anuncio"] = df["ds_anuncio"].astype(str).str.strip()
+
         returns_data = pd.DataFrame()
         if not returns_df.empty:
             returns = returns_df.copy()
@@ -321,6 +338,10 @@ class SalesDataLoader:
             returns["periodo_devolucao"] = returns["data_devolucao"].dt.to_period("M")
             returns["qtd_sku"] = returns.get("qtd_sku", 0).fillna(0.0)
             returns["devolucao_receita_bruta"] = returns.get("devolucao_receita_bruta", 0).fillna(0.0)
+            returns["cd_anuncio"] = returns.get("cd_anuncio", returns.get("cd_produto", "")).fillna("")
+            returns["ds_anuncio"] = returns.get("ds_anuncio", returns.get("ds_produto", "")).fillna("")
+            returns["cd_anuncio"] = returns["cd_anuncio"].astype(str).str.strip()
+            returns["ds_anuncio"] = returns["ds_anuncio"].astype(str).str.strip()
 
             summary = (
                 returns.groupby(["nr_nota_fiscal", "cd_produto"], as_index=False)
@@ -340,6 +361,8 @@ class SalesDataLoader:
                     "nr_nota_fiscal",
                     "nr_nota_devolucao",
                     "categoria",
+                    "cd_anuncio",
+                    "ds_anuncio",
                     "cd_produto",
                     "cd_fabricante",
                     "ds_produto",

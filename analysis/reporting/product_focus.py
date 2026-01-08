@@ -13,7 +13,7 @@ def build_product_focus_analysis(
     category: Optional[str],
     product_codes: Optional[List[str]] = None,
 ) -> Dict[str, pd.DataFrame]:
-    """Avalia o desempenho comercial filtrando por categoria ou lista especifica de SKUs."""
+    """Avalia o desempenho comercial filtrando por categoria ou lista específica de anúncios."""
 
     data = _filter_by_category(df, category)
     normalized_codes = (
@@ -22,7 +22,7 @@ def build_product_focus_analysis(
         else []
     )
     focus = (
-        data[data["cd_produto"].isin(normalized_codes)].copy()
+        data[data["cd_anuncio"].isin(normalized_codes)].copy()
         if normalized_codes
         else data.copy()
     )
@@ -35,21 +35,21 @@ def build_product_focus_analysis(
 
     resumo = _aggregate_metrics(
         focus,
-        group_cols=["cd_produto", "ds_produto", "cd_fabricante", "tp_anuncio"],
+        group_cols=["cd_anuncio", "ds_anuncio", "cd_fabricante", "tp_anuncio"],
     )
     resumo.sort_values(["receita", "qtd_vendida"], ascending=[False, False], inplace=True)
 
     analise_diaria = _aggregate_metrics(
         focus,
-        group_cols=["data", "cd_produto", "ds_produto", "cd_fabricante", "tp_anuncio"],
+        group_cols=["data", "cd_anuncio", "ds_anuncio", "cd_fabricante", "tp_anuncio"],
     )
-    analise_diaria.sort_values(["data", "cd_produto"], inplace=True)
+    analise_diaria.sort_values(["data", "cd_anuncio"], inplace=True)
 
     analise_mensal = _aggregate_metrics(
         focus,
-        group_cols=["periodo", "cd_produto", "ds_produto", "cd_fabricante", "tp_anuncio"],
+        group_cols=["periodo", "cd_anuncio", "ds_anuncio", "cd_fabricante", "tp_anuncio"],
     )
-    analise_mensal.sort_values(["periodo", "cd_produto"], inplace=True)
+    analise_mensal.sort_values(["periodo", "cd_anuncio"], inplace=True)
     analise_mensal["periodo"] = analise_mensal["periodo"].astype(str)
 
     resumo_fmt = format_percentage_columns(resumo, ["margem_media", "taxa_devolucao"])
@@ -68,21 +68,24 @@ def _aggregate_metrics(
 ) -> pd.DataFrame:
     working = df.copy()
 
-    aggregated = (
-        working.groupby(group_cols, as_index=False)
-        .agg(
-            pedidos=("nr_nota_fiscal", "nunique"),
-            qtd_vendida=("qtd_sku", "sum"),
-            receita=("rbld", "sum"),
-            custo_total=("custo_total", "sum"),
-            margem_media=("perc_margem_bruta", "mean"),
-            qtd_devolvida=("qtd_devolvido", "sum"),
-            receita_devolucao=("devolucao_receita_bruta", "sum"),
-            lucro_bruto_estimado=("lucro_bruto_estimado", "sum"),
-            preco_medio_praticado=("preco_vendido", "mean"),
-            preco_min_periodo=("preco_vendido", "min"),
-        )
-    )
+    aggregations = {
+        "pedidos": ("nr_nota_fiscal", "nunique"),
+        "qtd_vendida": ("qtd_sku", "sum"),
+        "receita": ("rbld", "sum"),
+        "custo_total": ("custo_total", "sum"),
+        "margem_media": ("perc_margem_bruta", "mean"),
+        "qtd_devolvida": ("qtd_devolvido", "sum"),
+        "receita_devolucao": ("devolucao_receita_bruta", "sum"),
+        "lucro_bruto_estimado": ("lucro_bruto_estimado", "sum"),
+        "preco_medio_praticado": ("preco_vendido", "mean"),
+        "preco_min_periodo": ("preco_vendido", "min"),
+    }
+
+    for info_col in ("cd_produto", "ds_produto"):
+        if info_col in working.columns and info_col not in group_cols:
+            aggregations[info_col] = (info_col, "first")
+
+    aggregated = working.groupby(group_cols, as_index=False).agg(aggregations)
 
     aggregated["preco_medio_praticado"] = aggregated["preco_medio_praticado"].round(2)
     aggregated["preco_min_periodo"] = aggregated["preco_min_periodo"].round(2)
@@ -109,6 +112,7 @@ def _aggregate_metrics(
 
     ordered_columns = [
         *(col for col in group_cols if col in aggregated.columns),
+        *(col for col in ("cd_produto", "ds_produto") if col in aggregated.columns),
         "pedidos",
         "qtd_vendida",
         "receita",
