@@ -29,7 +29,7 @@ def build_top_history_analysis(
         .agg(
             qtd_vendida=("qtd_sku", "sum"),
             pedidos=("nr_nota_fiscal", "nunique"),
-            receita=("rob", "sum"),
+            receita=("rbld", "sum"),
             devolucao=("qtd_devolvido", "sum"),
             margem=("perc_margem_bruta", "mean"),
             preco_min_periodo=("preco_vendido", "min"),
@@ -49,7 +49,7 @@ def build_top_history_analysis(
             meses_com_venda=("periodo", "nunique"),
             quantidade_total=("qtd_sku", "sum"),
             pedidos_total=("nr_nota_fiscal", "nunique"),
-            receita_total=("rob", "sum"),
+            receita_total=("rbld", "sum"),
             devolucao_total=("qtd_devolvido", "sum"),
             perc_margem_media_rbld=("perc_margem_bruta", "mean"),
         )

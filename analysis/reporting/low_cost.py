@@ -33,7 +33,7 @@ def build_low_cost_reputation_analysis(
         .agg(
             quantidade_total=("qtd_sku", "sum"),
             pedidos_total=("nr_nota_fiscal", "nunique"),
-            receita_total=("rob", "sum"),
+            receita_total=("rbld", "sum"),
             custo_medio_unitario=("custo_produto", "mean"),
             custo_total=("custo_total", "sum"),
             devolucao_total=("qtd_devolvido", "sum"),

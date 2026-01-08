@@ -55,7 +55,7 @@ def build_potential_sku_analysis(
         .agg(
             qtd_vendida=("qtd_sku", "sum"),
             pedidos=("nr_nota_fiscal", "nunique"),
-            receita=("rob", "sum"),
+            receita=("rbld", "sum"),
             custo=("custo_total", "sum"),
             margem_media=("perc_margem_bruta", "mean"),
             qtd_devolvida=("qtd_devolvido", "sum"),

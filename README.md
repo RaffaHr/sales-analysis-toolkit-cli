@@ -60,7 +60,7 @@ analysis/
 | TP_ANUNCIO                        | `tp_anuncio`                   | Tipo de anúncio (ex.: produto final, kit, variação).   |
 | Qtd de pedido                     | `qtd_pedidos`                  | Indicador legado de pedidos (mantido para referência). |
 | Qtd de sku no pedido              | `qtd_sku`                      | Quantidade total de unidades vendidas.                 |
-| ROB                               | `rob`                          | Receita Bruta observada (quando disponível).           |
+| RBLD                               | `rbld`                          | Receita Bruta observada (quando disponível).           |
 | Preco vendido                     | `preco_vendido`                | Preço unitário praticado no pedido.                    |
 | Perc Margem Bruta% RBLD           | `perc_margem_bruta`            | Margem bruta percentual (0 a 1).                       |
 | Custo do produto                  | `custo_produto`                | Custo unitário de aquisição/estoque.                   |
@@ -79,7 +79,7 @@ analysis/
 3. **Normalização de texto**: `categoria`, `cd_produto`, `ds_produto`, `cd_fabricante` e `tp_anuncio` são preenchidos com valores padrão e aparados.
 4. **Métricas derivadas**:
    - `receita_bruta_calc = preco_vendido * qtd_sku`
-   - `rob = ROB` quando informado; caso contrário usa `receita_bruta_calc`
+   - `rbld = RBLD` quando informado; caso contrário usa `receita_bruta_calc`
    - `custo_total = custo_produto * qtd_sku`
    - `lucro_bruto_estimado = receita_bruta_calc * perc_margem_bruta`
    - `taxa_devolucao = qtd_devolvido / qtd_sku` (com proteção contra divisão por zero)
@@ -220,7 +220,6 @@ Passo a passo:
    - `resumo_produtos`: consolida o desempenho total no intervalo (receita, pedidos, margem média, ticket médio, devoluções, custo total, lucro estimado) junto com `cd_fabricante` e `tp_anuncio`.
    - `analise_diaria`: mostra a evolução dia a dia, com métricas de pedidos, quantidade vendida, ticket médio, preços praticados e taxas de devolução.
    - `analise_mensal`: agrega os mesmos indicadores por mês (`periodo`), útil quando o recorte cobre mais de um mês.
-- A aba `analise_diaria` inclui um gráfico com eixo secundário que cruza pedidos x margem. Use a lista suspensa ao lado do gráfico para escolher o `CD_PRODUTO`; as colunas auxiliares usam `FILTRO` para atualizar dinamicamente os dados que alimentam o gráfico.
 
 **Intuito**: comparar rapidamente campanhas, reposições, lançamentos ou uma categoria inteira para decidir se a performance está dentro do esperado.
 

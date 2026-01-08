@@ -1,42 +1,97 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional, Sequence
 
 import hashlib
 import re
 
 import numpy as np
 import pandas as pd
-from openpyxl import load_workbook
 
-COLUMN_MAP = {
-    "ANO_MES": "ano_mes",
-    "DATA": "data",
-    "NR_NOTA_FISCAL": "nr_nota_fiscal",
+SALES_COLUMN_MAP = {
+    "DATA_VENDA": "data",
+    "NOTA_FISCAL_VENDA": "nr_nota_fiscal",
     "CATEGORIA": "categoria",
     "CD_PRODUTO": "cd_produto",
-    "DS_PRODUTO": "ds_produto",
-    "Qtd de pedido": "qtd_pedidos",
-    "Qtd de sku no pedido": "qtd_sku",
-    "ROB": "rob",
-    "Preco vendido": "preco_vendido",
-    "Perc Margem Bruta% RBLD": "perc_margem_bruta",
-    "Custo do produto": "custo_produto",
-    "Qtd Produto Devolvido": "qtd_devolvido",
-    "Devolução Receita Bruta Tot$": "devolucao_receita_bruta",
     "CD_FABRICANTE": "cd_fabricante",
+    "DS_PRODUTO": "ds_produto",
     "TP_ANUNCIO": "tp_anuncio",
+    "Custo Medio$": "custo_produto",
+    "Custo Médio$": "custo_produto",
+    "Preco Medio Unit$": "preco_vendido",
+    "Preço Medio Unit$": "preco_vendido",
+    "Unidades": "qtd_sku",
+    "Perc Margem Bruta% RBLD": "perc_margem_bruta",
+    "Receita Bruta (-) Devoluções Tot$": "rbld",
+    "TP_REGISTRO": "tp_registro",
 }
 
-NUMERIC_COLUMNS = [
-    "qtd_pedidos",
-    "qtd_sku",
-    "rob",
-    "preco_vendido",
-    "perc_margem_bruta",
+RETURN_COLUMN_MAP = {
+    "DATA_VENDA": "data_venda",
+    "DATA_DEVOLUCAO": "data_devolucao",
+    "NOTA_FISCAL_VENDA": "nr_nota_fiscal",
+    "NOTA_FISCAL_DEVOLUCAO": "nr_nota_devolucao",
+    "CATEGORIA": "categoria",
+    "CD_PRODUTO": "cd_produto",
+    "CD_FABRICANTE": "cd_fabricante",
+    "DS_PRODUTO": "ds_produto",
+    "TP_ANUNCIO": "tp_anuncio",
+    "Custo Medio$": "custo_produto",
+    "Custo Médio$": "custo_produto",
+    "Preco Medio Unit$": "preco_vendido",
+    "Preço Medio Unit$": "preco_vendido",
+    "Unidades": "qtd_sku",
+    "Devolução Receita Bruta Tot$": "devolucao_receita_bruta",
+    "TP_REGISTRO": "tp_registro",
+}
+
+SALES_DTYPES = {
+    "NOTA_FISCAL_VENDA": str,
+    "CATEGORIA": str,
+    "CD_PRODUTO": str,
+    "CD_FABRICANTE": str,
+    "DS_PRODUTO": str,
+    "TP_ANUNCIO": str,
+    "Custo Medio$": str,
+    "Custo Médio$": str,
+    "Preco Medio Unit$": str,
+    "Preço Medio Unit$": str,
+    "Unidades": str,
+    "Perc Margem Bruta% RBLD": str,
+    "Receita Bruta (-) Devoluções Tot$": str,
+    "TP_REGISTRO": str,
+}
+
+RETURN_DTYPES = {
+    "NOTA_FISCAL_VENDA": str,
+    "NOTA_FISCAL_DEVOLUCAO": str,
+    "CATEGORIA": str,
+    "CD_PRODUTO": str,
+    "CD_FABRICANTE": str,
+    "DS_PRODUTO": str,
+    "TP_ANUNCIO": str,
+    "Custo Medio$": str,
+    "Custo Médio$": str,
+    "Preco Medio Unit$": str,
+    "Preço Medio Unit$": str,
+    "Unidades": str,
+    "Devolução Receita Bruta Tot$": str,
+    "TP_REGISTRO": str,
+}
+
+SALES_NUMERIC_COLUMNS = [
     "custo_produto",
-    "qtd_devolvido",
+    "preco_vendido",
+    "qtd_sku",
+    "perc_margem_bruta",
+    "rbld",
+]
+
+RETURN_NUMERIC_COLUMNS = [
+    "custo_produto",
+    "preco_vendido",
+    "qtd_sku",
     "devolucao_receita_bruta",
 ]
 
@@ -59,51 +114,100 @@ class SalesDataLoader:
     ) -> None:
         self.excel_path = Path(excel_path)
         self.sheet_name = sheet_name
+        self.return_prefix = "DEVOLUCAO"
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.enable_cache = enable_cache
         self.progress_callback = progress_callback
 
     def load(self) -> pd.DataFrame:
-        """Carrega as abas de vendas e devolve um DataFrame padronizado."""
+        """Carrega vendas e devoluções, aplicando os tratamentos necessários."""
         if not self.excel_path.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {self.excel_path}")
 
-        sheet_names = self._resolve_sheet_names()
-        cache = self._try_load_cache(sheet_names)
+        sales_sheets = self._resolve_sheet_names(self.sheet_name, required=True)
+        return_sheets = self._resolve_sheet_names(self.return_prefix, required=False)
+        signature = self._build_signature(sales_sheets, return_sheets)
+        total_steps = max(1, len(sales_sheets) + len(return_sheets) + 1)
+
+        cache = self._try_load_cache(signature)
         if cache is not None:
-            self._notify_progress(1, 1)
+            self._notify_progress(total_steps, total_steps)
             return cache
 
-        if self.progress_callback is None:
-            df = self._read_with_pandas(sheet_names)
-        else:
-            df = self._read_with_progress(sheet_names)
-        df = self._coerce_numeric(df)
-        df = self._enrich(df)
-        self._store_cache(df, sheet_names)
-        return df
+        self._notify_progress(0, total_steps)
+        completed = 0
 
-    def _resolve_sheet_names(self) -> list[str]:
+        def _advance() -> None:
+            nonlocal completed
+            completed += 1
+            self._notify_progress(completed, total_steps)
+
+        sales_df = self._read_group(sales_sheets, SALES_COLUMN_MAP, SALES_DTYPES, on_sheet_read=_advance)
+        returns_df = (
+            self._read_group(return_sheets, RETURN_COLUMN_MAP, RETURN_DTYPES, on_sheet_read=_advance)
+            if return_sheets
+            else pd.DataFrame()
+        )
+
+        sales_df = self._coerce_numeric(sales_df, SALES_NUMERIC_COLUMNS, PERCENT_COLUMNS)
+        if not returns_df.empty:
+            returns_df = self._coerce_numeric(returns_df, RETURN_NUMERIC_COLUMNS, None)
+
+        enriched = self._enrich(sales_df, returns_df)
+        _advance()
+        self._store_cache(enriched, signature)
+        return enriched
+
+    def _resolve_sheet_names(self, prefix: str, *, required: bool) -> list[str]:
         with pd.ExcelFile(self.excel_path, engine="openpyxl") as workbook:
             available = workbook.sheet_names
 
-        if self.sheet_name in available:
-            return [self.sheet_name]
-
-        matches = [name for name in available if name.startswith(self.sheet_name)]
+        direct_match = prefix if prefix in available else None
+        matches = [name for name in available if name.startswith(prefix)]
+        if direct_match and direct_match not in matches:
+            matches.insert(0, direct_match)
         if matches:
             return sorted(matches, key=_natural_sort_key)
+        if required:
+            raise ValueError(
+                "Nenhuma aba corresponde ao padrão solicitado. "
+                f"Informe uma aba existente ou use prefixos como '{prefix}01'."
+            )
+        return []
 
-        raise ValueError(
-            "Nenhuma aba corresponde ao padrão solicitado. "
-            f"Informe uma aba existente ou use prefixos como '{self.sheet_name}01'."
-        )
+    def _build_signature(self, sales_sheets: Sequence[str], return_sheets: Sequence[str]) -> list[str]:
+        signature = [f"{self.sheet_name}:{name}" for name in sales_sheets]
+        signature.extend(f"{self.return_prefix}:{name}" for name in return_sheets)
+        return signature or ["empty"]
 
-    def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        available_map = {original: COLUMN_MAP[original] for original in df.columns if original in COLUMN_MAP}
-        df = df.rename(columns=available_map)
+    def _normalize_columns(self, df: pd.DataFrame, column_map: dict[str, str]) -> pd.DataFrame:
+        rename_map = {original: column_map[original] for original in df.columns if original in column_map}
+        df = df.rename(columns=rename_map)
         df.columns = [col.strip().lower() for col in df.columns]
         return df
+
+    def _read_group(
+        self,
+        sheet_names: Sequence[str],
+        column_map: dict[str, str],
+        dtype_map: dict[str, object],
+        *,
+        on_sheet_read: Callable[[], None] | None = None,
+    ) -> pd.DataFrame:
+        if not sheet_names:
+            return pd.DataFrame()
+        frames: list[pd.DataFrame] = []
+        for name in sheet_names:
+            raw = pd.read_excel(
+                self.excel_path,
+                sheet_name=name,
+                engine="openpyxl",
+                dtype=dtype_map,
+            )
+            frames.append(self._normalize_columns(raw, column_map))
+            if on_sheet_read is not None:
+                on_sheet_read()
+        return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
     def _notify_progress(self, processed: int, total: int) -> None:
         if self.progress_callback is None:
@@ -111,120 +215,47 @@ class SalesDataLoader:
         try:
             self.progress_callback(processed, total)
         except Exception:
-            # Evita que uma falha na atualização de progresso interrompa o carregamento
             pass
 
-    def _try_load_cache(self, sheet_names: Iterable[str]) -> Optional[pd.DataFrame]:
+    def _try_load_cache(self, signature: Iterable[str]) -> Optional[pd.DataFrame]:
         if not self.enable_cache or self.cache_dir is None:
             return None
-        cache_path = self._cache_path(sheet_names)
+        cache_path = self._cache_path(signature)
         if not cache_path.exists():
             return None
-        cache_mtime = cache_path.stat().st_mtime
-        excel_mtime = self.excel_path.stat().st_mtime
-        if cache_mtime < excel_mtime:
+        if cache_path.stat().st_mtime < self.excel_path.stat().st_mtime:
             return None
         try:
             return pd.read_pickle(cache_path)
         except Exception:
             return None
 
-    def _store_cache(self, df: pd.DataFrame, sheet_names: Iterable[str]) -> None:
+    def _store_cache(self, df: pd.DataFrame, signature: Iterable[str]) -> None:
         if not self.enable_cache or self.cache_dir is None:
             return
-        cache_path = self._cache_path(sheet_names)
+        cache_path = self._cache_path(signature)
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_pickle(cache_path)
         except Exception:
             pass
 
-    def _cache_path(self, sheet_names: Iterable[str]) -> Path:
-        signature = ",".join(sorted(sheet_names))
-        digest = hashlib.md5(signature.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
+    def _cache_path(self, signature: Iterable[str]) -> Path:
+        fingerprint = ",".join(sorted(signature))
+        digest = hashlib.md5(fingerprint.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
         name = f"{self.excel_path.stem}_{digest}.pkl"
         base_dir = self.cache_dir if self.cache_dir is not None else self.excel_path.parent
         return base_dir / name
 
-    def _read_with_pandas(self, sheet_names: list[str]) -> pd.DataFrame:
-        frames = []
-        for name in sheet_names:
-            raw = pd.read_excel(
-                self.excel_path,
-                sheet_name=name,
-                engine="openpyxl",
-                dtype={
-                    "CD_PRODUTO": str,
-                    "DS_PRODUTO": str,
-                    "ANO_MES": str,
-                    "DATA": str,
-                    "NR_NOTA_FISCAL": str,
-                    "CD_FABRICANTE": str,
-                    "TP_ANUNCIO": str,
-                },
-            )
-            frames.append(self._normalize_columns(raw))
-        return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
-
-    def _read_with_progress(self, sheet_names: list[str]) -> pd.DataFrame:
-        workbook = load_workbook(self.excel_path, read_only=True, data_only=True)
-        try:
-            total_rows = sum(self._sheet_data_rows(workbook[name]) for name in sheet_names)
-            self._notify_progress(0, total_rows)
-
-            frames: list[pd.DataFrame] = []
-            processed = 0
-            for name in sheet_names:
-                ws = workbook[name]
-                header_iter = ws.iter_rows(min_row=1, max_row=1, values_only=True)
-                try:
-                    header_tuple = next(header_iter)
-                except StopIteration:
-                    continue
-                header = [self._ensure_str(cell) for cell in header_tuple]
-                data_rows: list[list[object]] = []
-                for row in ws.iter_rows(min_row=2, values_only=True):
-                    if row is None:
-                        continue
-                    row_values = list(row)
-                    if not any(value is not None for value in row_values):
-                        continue
-                    if len(row_values) < len(header):
-                        row_values.extend([None] * (len(header) - len(row_values)))
-                    elif len(row_values) > len(header):
-                        row_values = row_values[: len(header)]
-                    data_rows.append(row_values)
-                    processed += 1
-                    self._notify_progress(processed, total_rows)
-                if data_rows:
-                    frame = pd.DataFrame.from_records(data_rows, columns=header)
-                else:
-                    frame = pd.DataFrame(columns=header)
-                frames.append(self._normalize_columns(frame))
-
-            if not frames:
-                self._notify_progress(total_rows, total_rows)
-                return pd.DataFrame()
-
-            df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
-            self._notify_progress(total_rows, total_rows)
+    def _coerce_numeric(
+        self,
+        df: pd.DataFrame,
+        numeric_columns: Sequence[str],
+        percent_columns: Optional[Sequence[str]],
+    ) -> pd.DataFrame:
+        if df.empty:
             return df
-        finally:
-            workbook.close()
-
-    @staticmethod
-    def _sheet_data_rows(ws) -> int:
-        max_row = ws.max_row or 0
-        return max(max_row - 1, 0)
-
-    @staticmethod
-    def _ensure_str(value: object) -> str:
-        if value is None:
-            return ""
-        return str(value)
-
-    def _coerce_numeric(self, df: pd.DataFrame) -> pd.DataFrame:
-        for column in NUMERIC_COLUMNS:
+        for column in numeric_columns:
             if column not in df.columns:
                 continue
             series = df[column]
@@ -235,91 +266,114 @@ class SalesDataLoader:
                     .str.replace(",", ".", regex=False)
                 )
             df[column] = pd.to_numeric(series, errors="coerce")
-        for column in PERCENT_COLUMNS:
-            if column not in df.columns:
-                continue
-            mask = df[column].notna()
-            df.loc[mask, column] = np.where(
-                df.loc[mask, column] > 1,
-                df.loc[mask, column] / 100,
-                df.loc[mask, column],
-            )
+        if percent_columns:
+            for column in percent_columns:
+                if column not in df.columns:
+                    continue
+                mask = df[column].notna()
+                df.loc[mask, column] = np.where(
+                    df.loc[mask, column] > 1,
+                    df.loc[mask, column] / 100,
+                    df.loc[mask, column],
+                )
         return df
 
-    def _enrich(self, df: pd.DataFrame) -> pd.DataFrame:
-        data_series = None
-        if "data" in df.columns:
-            parsed_dates = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
-            data_series = parsed_dates.dt.normalize()
-            df["data"] = data_series
-        elif "ano_mes" in df.columns:
-            cleaned = df["ano_mes"].astype(str).str.replace(" ", "", regex=False)
-            cleaned = cleaned.str.replace(r"[^0-9]", "", regex=True)
-            cleaned = cleaned.where(cleaned.str.len() == 6)
-            df["ano_mes"] = cleaned
-            data_series = pd.to_datetime(df["ano_mes"], format="%Y%m", errors="coerce")
-            df["data"] = data_series
+    def _enrich(self, sales_df: pd.DataFrame, returns_df: pd.DataFrame) -> pd.DataFrame:
+        if sales_df.empty:
+            result = sales_df.copy()
+            result.attrs["returns_data"] = pd.DataFrame()
+            return result
 
-        if data_series is not None:
-            data_series = data_series.dt.normalize()
-            df["data"] = data_series
-            df["ano_mes"] = data_series.dt.strftime("%Y%m")
-            df["periodo"] = data_series.dt.to_period("M")
-        else:
-            df["periodo"] = pd.NaT
+        df = sales_df.copy()
 
-        if "categoria" not in df.columns:
-            df["categoria"] = "Sem Categoria"
-        df["categoria"] = df["categoria"].fillna("Sem Categoria").astype(str).str.strip()
+        if "tp_registro" in df.columns:
+            df = df[df["tp_registro"].str.contains("venda", case=False, na=True)].copy()
 
-        if "cd_produto" not in df.columns:
-            df["cd_produto"] = ""
-        df["cd_produto"] = df["cd_produto"].fillna("").astype(str).str.strip()
+        df["data"] = pd.to_datetime(df.get("data"), dayfirst=True, errors="coerce")
+        df["data"] = df["data"].dt.normalize()
+        df["ano_mes"] = df["data"].dt.strftime("%Y%m")
+        df["periodo"] = df["data"].dt.to_period("M")
 
-        if "ds_produto" not in df.columns:
-            df["ds_produto"] = ""
-        df["ds_produto"] = df["ds_produto"].fillna("").astype(str).str.strip()
+        text_defaults = {
+            "categoria": "Sem Categoria",
+            "cd_produto": "",
+            "ds_produto": "",
+            "cd_fabricante": "",
+            "tp_anuncio": "Nao informado",
+            "nr_nota_fiscal": "",
+        }
+        for column, default in text_defaults.items():
+            if column not in df.columns:
+                df[column] = default
+            df[column] = df[column].fillna(default)
+            df[column] = df[column].astype(str).str.strip()
+            if default == "":
+                df[column] = df[column].replace("nan", "")
 
-        if "nr_nota_fiscal" not in df.columns:
-            df["nr_nota_fiscal"] = ""
-        df["nr_nota_fiscal"] = df["nr_nota_fiscal"].fillna("").astype(str).str.strip()
+        returns_data = pd.DataFrame()
+        if not returns_df.empty:
+            returns = returns_df.copy()
+            if "tp_registro" in returns.columns:
+                returns = returns[returns["tp_registro"].str.contains("devol", case=False, na=True)].copy()
+            returns["data_venda"] = pd.to_datetime(returns.get("data_venda"), dayfirst=True, errors="coerce").dt.normalize()
+            returns["data_devolucao"] = pd.to_datetime(returns.get("data_devolucao"), dayfirst=True, errors="coerce").dt.normalize()
+            returns["periodo_venda"] = returns["data_venda"].dt.to_period("M")
+            returns["periodo_devolucao"] = returns["data_devolucao"].dt.to_period("M")
+            returns["qtd_sku"] = returns.get("qtd_sku", 0).fillna(0.0)
+            returns["devolucao_receita_bruta"] = returns.get("devolucao_receita_bruta", 0).fillna(0.0)
 
-        if "cd_fabricante" not in df.columns:
-            df["cd_fabricante"] = ""
-        df["cd_fabricante"] = df["cd_fabricante"].fillna("").astype(str).str.strip()
+            summary = (
+                returns.groupby(["nr_nota_fiscal", "cd_produto"], as_index=False)
+                .agg(
+                    qtd_devolvido=("qtd_sku", "sum"),
+                    devolucao_receita_bruta=("devolucao_receita_bruta", "sum"),
+                )
+            )
+            df = df.merge(summary, on=["nr_nota_fiscal", "cd_produto"], how="left")
 
-        if "tp_anuncio" not in df.columns:
-            df["tp_anuncio"] = "Nao informado"
-        df["tp_anuncio"] = df["tp_anuncio"].fillna("Nao informado").astype(str).str.strip()
+            returns_data = returns[
+                [
+                    "data_venda",
+                    "data_devolucao",
+                    "periodo_venda",
+                    "periodo_devolucao",
+                    "nr_nota_fiscal",
+                    "nr_nota_devolucao",
+                    "categoria",
+                    "cd_produto",
+                    "cd_fabricante",
+                    "ds_produto",
+                    "tp_anuncio",
+                    "qtd_sku",
+                    "devolucao_receita_bruta",
+                ]
+            ].copy()
+        if "qtd_devolvido" not in df.columns:
+            df["qtd_devolvido"] = 0.0
+        df["qtd_devolvido"] = df["qtd_devolvido"].fillna(0.0)
 
-        qtd_sku = df["qtd_sku"] if "qtd_sku" in df.columns else pd.Series(0, index=df.index, dtype=float)
-        preco_vendido = df["preco_vendido"] if "preco_vendido" in df.columns else pd.Series(0, index=df.index, dtype=float)
-        custo_unitario = df["custo_produto"] if "custo_produto" in df.columns else pd.Series(0, index=df.index, dtype=float)
-        devolvido = df["qtd_devolvido"] if "qtd_devolvido" in df.columns else pd.Series(0, index=df.index, dtype=float)
-        margem = df["perc_margem_bruta"] if "perc_margem_bruta" in df.columns else pd.Series(0, index=df.index, dtype=float)
-        receita = df["rob"] if "rob" in df.columns else pd.Series(0, index=df.index, dtype=float)
+        if "devolucao_receita_bruta" not in df.columns:
+            df["devolucao_receita_bruta"] = 0.0
+        df["devolucao_receita_bruta"] = df["devolucao_receita_bruta"].fillna(0.0)
 
-        qtd_sku = qtd_sku.fillna(0)
-        preco_vendido = preco_vendido.fillna(0)
-        custo_unitario = custo_unitario.fillna(0)
-        devolvido = devolvido.fillna(0)
-        margem = margem.fillna(0)
-        receita = receita.fillna(0)
+        df["preco_vendido"] = df.get("preco_vendido", 0).fillna(0.0)
+        df["custo_produto"] = df.get("custo_produto", 0).fillna(0.0)
+        df["qtd_sku"] = df.get("qtd_sku", 0).fillna(0.0)
+        df["perc_margem_bruta"] = df.get("perc_margem_bruta", 0).fillna(0.0)
+        df["rbld"] = df.get("rbld", 0).fillna(0.0)
 
-        df["receita_bruta_calc"] = preco_vendido * qtd_sku
-        df["rob"] = receita.where(receita > 0, df["receita_bruta_calc"])
-        df["custo_total"] = custo_unitario * qtd_sku
-        df["lucro_bruto_estimado"] = df["receita_bruta_calc"] * margem
+        df["receita_bruta_calc"] = df["preco_vendido"] * df["qtd_sku"]
+        fallback_mask = df["rbld"] <= 0
+        df.loc[fallback_mask, "rbld"] = df.loc[fallback_mask, "receita_bruta_calc"]
+        df["custo_total"] = df["custo_produto"] * df["qtd_sku"]
+        df["lucro_bruto_estimado"] = df["receita_bruta_calc"] * df["perc_margem_bruta"]
 
-        base = qtd_sku.to_numpy(dtype=float)
-        devol = devolvido.to_numpy(dtype=float)
-        taxas = np.divide(
-            devol,
-            base,
-            out=np.zeros_like(devol, dtype=float),
-            where=base > 0,
-        )
+        base = df["qtd_sku"].to_numpy(dtype=float)
+        devol = df["qtd_devolvido"].to_numpy(dtype=float)
+        taxas = np.divide(devol, base, out=np.zeros_like(devol, dtype=float), where=base > 0)
         df["taxa_devolucao"] = np.nan_to_num(taxas, nan=0.0)
+
+        df.attrs["returns_data"] = returns_data
         return df
 
 

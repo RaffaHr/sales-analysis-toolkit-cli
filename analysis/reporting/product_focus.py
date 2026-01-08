@@ -26,7 +26,9 @@ def build_product_focus_analysis(
         if normalized_codes
         else data.copy()
     )
-    focus["data"] = pd.to_datetime(focus.get("data"), errors="coerce")
+    focus["data"] = pd.to_datetime(
+        focus.get("data"), dayfirst=True, errors="coerce"
+    )
     focus = focus.dropna(subset=["data"])
 
     focus["data"] = focus["data"].dt.normalize()
@@ -71,7 +73,7 @@ def _aggregate_metrics(
         .agg(
             pedidos=("nr_nota_fiscal", "nunique"),
             qtd_vendida=("qtd_sku", "sum"),
-            receita=("rob", "sum"),
+            receita=("rbld", "sum"),
             custo_total=("custo_total", "sum"),
             margem_media=("perc_margem_bruta", "mean"),
             qtd_devolvida=("qtd_devolvido", "sum"),
