@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "key": "daily_combo_pedidos_margem",
+      "label": "Pedidos x margem diaria",
+      "chart_type": "column",
+      "x_column": "data",
+      "primary_series": [
+        {"column": "pedidos", "label": "Pedidos"}
+      ],
+      "secondary_series": [
+        {"column": "margem_media", "label": "Margem media", "chart_type": "line"}
+      ],
+      "filter_column": "cd_produto",
+      "dropdown_label": "Selecione o produto:",
+      "title": "Pedidos x Margem por Dia",
+      "x_axis_label": "Data",
+      "y_axis_label": "Pedidos",
+      "y2_axis_label": "Margem %",
+      "description": "Comparativo diario entre pedidos e margem media por SKU."
+    },
+    {
+      "key": "periodo_qtd_vendida_column",
+      "label": "Quantidade vendida por periodo",
+      "chart_type": "column",
+      "x_column": "periodo",
+      "primary_series": [
+        {"column": "qtd_vendida", "label": "Quantidade vendida"}
+      ],
+      "title": "Evolucao de vendas por periodo",
+      "x_axis_label": "Periodo",
+      "y_axis_label": "Quantidade"
+    },
+    {
+      "key": "produto_pedidos_column",
+      "label": "Pedidos por produto",
+      "chart_type": "column",
+      "x_column": "cd_produto",
+      "primary_series": [
+        {"column": "pedidos", "label": "Pedidos"}
+      ],
+      "title": "Pedidos por produto",
+      "x_axis_label": "Produto",
+      "y_axis_label": "Pedidos"
+    },
+    {
+      "key": "produto_quantidade_total_column",
+      "label": "Quantidade total por produto",
+      "chart_type": "column",
+      "x_column": "cd_produto",
+      "primary_series": [
+        {"column": "quantidade_total", "label": "Quantidade total"}
+      ],
+      "title": "Quantidade total por produto",
+      "x_axis_label": "Produto",
+      "y_axis_label": "Quantidade"
+    },
+    {
+      "key": "produto_taxa_devolucao_total_column",
+      "label": "Taxa de devolucao por produto",
+      "chart_type": "column",
+      "x_column": "cd_produto",
+      "primary_series": [
+        {"column": "taxa_devolucao_total", "label": "Taxa de devolucao"}
+      ],
+      "title": "Taxa de devolucao total",
+      "x_axis_label": "Produto",
+      "y_axis_label": "Taxa de devolucao"
+    },
+    {
+      "key": "periodo_taxa_devolucao_line",
+      "label": "Taxa de devolucao por periodo",
+      "chart_type": "line",
+      "x_column": "periodo",
+      "primary_series": [
+        {"column": "taxa_devolucao", "label": "Taxa de devolucao"}
+      ],
+      "title": "Taxa de devolucao por periodo",
+      "x_axis_label": "Periodo",
+      "y_axis_label": "Taxa de devolucao"
+    },
+    {
+      "key": "periodo_taxa_devolucao_media_line",
+      "label": "Taxa media de devolucao por periodo",
+      "chart_type": "line",
+      "x_column": "periodo",
+      "primary_series": [
+        {"column": "taxa_devolucao_media", "label": "Taxa media de devolucao"}
+      ],
+      "title": "Taxa media de devolucao por periodo",
+      "x_axis_label": "Periodo",
+      "y_axis_label": "Taxa de devolucao"
+    },
+    {
+      "key": "queda_pct_qtd_column",
+      "label": "Queda percentual por produto",
+      "chart_type": "column",
+      "x_column": "cd_produto",
+      "primary_series": [
+        {"column": "queda_pct_qtd", "label": "Queda percentual"}
+      ],
+      "title": "Queda percentual de volume por produto",
+      "x_axis_label": "Produto",
+      "y_axis_label": "Queda percentual"
+    }
+  ],
+  "pages": [
+    {
+      "analysis": "PRODUCT_FOCUS",
+      "sheet": "analise_diaria",
+      "presets": ["daily_combo_pedidos_margem"],
+      "default": "daily_combo_pedidos_margem"
+    },
+    {
+      "analysis": "PRODUCT_FOCUS",
+      "sheet": "analise_mensal",
+      "presets": ["periodo_qtd_vendida_column"],
+      "default": "periodo_qtd_vendida_column"
+    },
+    {
+      "analysis": "PRODUCT_FOCUS",
+      "sheet": "resumo_produtos",
+      "presets": ["produto_pedidos_column"],
+      "default": "produto_pedidos_column"
+    },
+    {
+      "analysis": "POTENTIAL",
+      "sheet": "potenciais",
+      "presets": ["queda_pct_qtd_column"],
+      "default": "queda_pct_qtd_column"
+    },
+    {
+      "analysis": "POTENTIAL",
+      "sheet": "hist_mensal",
+      "presets": ["periodo_qtd_vendida_column"],
+      "default": "periodo_qtd_vendida_column"
+    },
+    {
+      "analysis": "TOP_SELLERS",
+      "sheet": "ranking",
+      "presets": ["produto_quantidade_total_column"],
+      "default": "produto_quantidade_total_column"
+    },
+    {
+      "analysis": "TOP_SELLERS",
+      "sheet": "detalhe_mensal",
+      "presets": ["periodo_qtd_vendida_column"],
+      "default": "periodo_qtd_vendida_column"
+    },
+    {
+      "analysis": "REPUTATION",
+      "sheet": "produtos_indicados",
+      "presets": ["produto_quantidade_total_column"],
+      "default": "produto_quantidade_total_column"
+    },
+    {
+      "analysis": "RETURN",
+      "sheet": "resumo_produto",
+      "presets": ["produto_taxa_devolucao_total_column"],
+      "default": "produto_taxa_devolucao_total_column"
+    },
+    {
+      "analysis": "RETURN",
+      "sheet": "picos_por_mes",
+      "presets": ["periodo_taxa_devolucao_line"],
+      "default": "periodo_taxa_devolucao_line"
+    },
+    {
+      "analysis": "RETURN",
+      "sheet": "visao_mensal",
+      "presets": ["periodo_taxa_devolucao_media_line"],
+      "default": "periodo_taxa_devolucao_media_line"
+    }
+  ]
+}

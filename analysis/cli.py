@@ -12,6 +12,7 @@ import pandas as pd
 
 from .data_loader import load_sales_dataset
 from .exporters import export_to_excel
+from .charts_presets.chart_presets import ChartPresetCatalog, load_chart_presets
 from .reporting.low_cost import build_low_cost_reputation_analysis
 from .reporting.potential import build_potential_sku_analysis
 from .reporting.product_focus import build_product_focus_analysis
@@ -122,6 +123,8 @@ ANALYSIS_OPTIONS = [
         needs_product_codes=True,
     ),
 ]
+
+CHART_PRESETS: ChartPresetCatalog = load_chart_presets()
 
 
 def run_cli(dataset_path: Path | str = Path("BASE.xlsx")) -> None:

@@ -10,6 +10,21 @@ from ..formatting import format_percentage_columns
 MIN_MONTHLY_QUANTITY = 0
 MIN_RETURN_RATE = 0.2
 
+MONTH_NAMES_PT = {
+    1: ("Janeiro", "Jan"),
+    2: ("Fevereiro", "Fev"),
+    3: ("Marco", "Mar"),
+    4: ("Abril", "Abr"),
+    5: ("Maio", "Mai"),
+    6: ("Junho", "Jun"),
+    7: ("Julho", "Jul"),
+    8: ("Agosto", "Ago"),
+    9: ("Setembro", "Set"),
+    10: ("Outubro", "Out"),
+    11: ("Novembro", "Nov"),
+    12: ("Dezembro", "Dez"),
+}
+
 
 def build_return_analysis(
     df: pd.DataFrame,
@@ -70,21 +85,45 @@ def build_return_analysis(
     )
 
     overview = (
-        critical.groupby("periodo", as_index=False)
+        critical.groupby(["periodo", "cd_produto", "ds_produto"], as_index=False)
         .agg(
-            produtos_afetados=("cd_produto", "nunique"),
+            produtos_afetados=("cd_produto", "size"),
             total_devolvido=("qtd_devolvida", "sum"),
             total_vendido=("qtd_vendida", "sum"),
             pedidos_totais=("pedidos", "sum"),
         )
     )
     if not overview.empty and "periodo" in overview.columns:
+        period_dt = pd.to_datetime(overview["periodo"], errors="coerce")
+        overview["ano"] = period_dt.dt.year.astype("Int64")
+        overview["mes_extenso"] = period_dt.dt.month.map(lambda m: MONTH_NAMES_PT.get(m, ("", ""))[0])
+        overview["mes_abreviado"] = period_dt.dt.month.map(lambda m: MONTH_NAMES_PT.get(m, ("", ""))[1])
+        missing_mask = period_dt.isna()
+        if missing_mask.any():
+            overview.loc[missing_mask, ["ano", "mes_extenso", "mes_abreviado"]] = pd.NA
         overview["periodo"] = overview["periodo"].astype(str)
     overview["taxa_devolucao_media"] = np.where(
         overview["total_vendido"] > 0,
         overview["total_devolvido"] / overview["total_vendido"],
         0,
     )
+    if not overview.empty:
+        ordered_columns = [
+            "periodo",
+            "ano",
+            "mes_extenso",
+            "mes_abreviado",
+            "cd_produto",
+            "ds_produto",
+            "produtos_afetados",
+            "total_devolvido",
+            "total_vendido",
+            "pedidos_totais",
+            "taxa_devolucao_media",
+        ]
+        existing = [column for column in ordered_columns if column in overview.columns]
+        remainder = [column for column in overview.columns if column not in existing]
+        overview = overview[existing + remainder]
     resumo_produto = format_percentage_columns(summary, ["taxa_devolucao_total"])
     picos_por_mes = format_percentage_columns(critical, ["taxa_devolucao"])
     visao_mensal = format_percentage_columns(overview, ["taxa_devolucao_media"])
