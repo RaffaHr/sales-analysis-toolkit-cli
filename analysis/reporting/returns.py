@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 
 from ..formatting import format_percentage_columns
+from .common_returns import (
+    build_period_product_totals,
+    ensure_period_series,
+    normalize_product_codes,
+)
 
 MONTH_NAMES = {
     1: ("Janeiro", "Jan"),
@@ -35,42 +40,6 @@ RESULT_COLUMNS = [
     "receita_devolucao",
     "taxa_devolucao",
 ]
-
-
-def _normalize_product_codes(series: object, index: Optional[pd.Index] = None) -> pd.Series:
-    """Normaliza códigos numéricos para evitar mapeamento por anúncio."""
-    if series is None:
-        return pd.Series([], dtype=str, index=index)
-    if isinstance(series, pd.Series):
-        base_series = series
-    else:
-        base_series = pd.Series(series, index=index)
-
-    def _normalize(value: object) -> str:
-        if pd.isna(value):
-            return ""
-        if isinstance(value, (np.integer, int)):
-            return str(int(value))
-        if isinstance(value, (np.floating, float)):
-            if not np.isfinite(value):
-                return ""
-            if float(value).is_integer():
-                return str(int(value))
-            value = f"{value:f}"
-        text = str(value).strip()
-        lowered = text.lower()
-        if lowered in {"", "nan", "none", "null"}:
-            return ""
-        if "." in text:
-            integer, fractional = text.split(".", 1)
-            if fractional.strip("0") == "":
-                return integer
-        return text
-
-    normalized = base_series.apply(_normalize).astype(str)
-    return normalized
-
-
 def build_return_analysis(
     df: pd.DataFrame,
     category: Optional[str],
@@ -128,51 +97,20 @@ def _filter_returns_dataset(returns_df: pd.DataFrame, category: Optional[str]) -
     return returns_df[returns_df["categoria"] == category].copy()
 
 
-def _detect_units_column(df: pd.DataFrame) -> str:
-    # procura pela coluna de unidades mais provável
-    candidates = ["unidades", "qtd_sku", "qtd", "quantidade", "unid"]
-    for c in candidates:
-        if c in df.columns:
-            return c
-    # fallback: qualquer coluna numérica que pareça quantidade — mas preferimos exigir uma coluna
-    # se não houver coluna explícita, voltamos pra 'qtd_sku' e deixamos zeros
-    return "qtd_sku"
-
-
 def _build_sales_totals(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["periodo", "cd_produto", "itens_vendidos"])
-
-    working = df.copy()
-    # garantir periodo no formato YYYY-MM (string)
-    period_series = working.get("periodo")
-    if period_series is None:
-        date_series = pd.to_datetime(working.get("data"), dayfirst=True, errors="coerce")
-        period_series = date_series.dt.to_period("M")
-    if isinstance(period_series.dtype, pd.PeriodDtype):
-        working["periodo"] = period_series.astype(str)
-    else:
-        working["periodo"] = pd.to_datetime(period_series, errors="coerce").dt.to_period("M").astype(str)
-
-    if "cd_produto" in working.columns:
-        working["cd_produto"] = _normalize_product_codes(working["cd_produto"])
-    else:
-        working["cd_produto"] = _normalize_product_codes("", index=working.index)
-
-    units_col = _detect_units_column(working)
-    if units_col not in working.columns:
-        # garante coluna com zeros
-        working["qtd_sku"] = 0.0
-        units_col = "qtd_sku"
-
-    working["__units__"] = pd.to_numeric(working.get(units_col, 0), errors="coerce").fillna(0.0)
-
-    grouped = (
-        working.groupby(["periodo", "cd_produto"], as_index=False)
-        .agg(itens_vendidos=("__units__", "sum"))
+    totals = build_period_product_totals(
+        df,
+        period_column="periodo",
+        date_column="data",
+        product_column="cd_produto",
+        unit_result_name="itens_vendidos",
     )
-    grouped["itens_vendidos"] = grouped["itens_vendidos"].fillna(0.0)
-    return grouped
+    if "cd_produto" not in totals.columns:
+        totals["cd_produto"] = ""
+    totals["itens_vendidos"] = totals.get("itens_vendidos", 0).fillna(0.0)
+    return totals[
+        ["periodo", "cd_produto", "itens_vendidos"]
+    ]
 
 
 def _prepare_returns_dataset(
@@ -186,14 +124,14 @@ def _prepare_returns_dataset(
     working["qtd_sku"] = working.get("qtd_sku", 0).fillna(0.0)
     working["devolucao_receita_bruta"] = working.get("devolucao_receita_bruta", 0).fillna(0.0)
     if "cd_produto" in working.columns:
-        working["cd_produto"] = _normalize_product_codes(working["cd_produto"])
+        working["cd_produto"] = normalize_product_codes(working["cd_produto"])
     else:
-        working["cd_produto"] = _normalize_product_codes("", index=working.index)
+        working["cd_produto"] = normalize_product_codes("", index=working.index)
     working["ds_produto"] = working.get("ds_produto", "").astype(str).str.strip()
     working["nr_nota_fiscal"] = working.get("nr_nota_fiscal", "").astype(str).str.strip()
 
-    working["periodo_venda"] = _ensure_period_series(working, "periodo_venda", "data_venda")
-    working["periodo_devolucao"] = _ensure_period_series(working, "periodo_devolucao", "data_devolucao")
+    working["periodo_venda"] = ensure_period_series(working, "periodo_venda", "data_venda")
+    working["periodo_devolucao"] = ensure_period_series(working, "periodo_devolucao", "data_devolucao")
 
     nota_devolucao = working.get("nr_nota_devolucao")
     nota_venda = working.get("nr_nota_fiscal")
@@ -210,24 +148,6 @@ def _prepare_returns_dataset(
     working["pedido_devolucao_id"] = working["pedido_devolucao_id"].fillna("").astype(str).str.strip()
 
     return working
-
-
-def _ensure_period_series(df: pd.DataFrame, period_column: str, date_column: str) -> pd.Series:
-    if period_column in df.columns:
-        series = df[period_column]
-        if isinstance(series.dtype, pd.PeriodDtype):
-            return series
-        if pd.api.types.is_datetime64_any_dtype(series):
-            return series.dt.to_period("M")
-        converted = pd.to_datetime(series, dayfirst=True, errors="coerce")
-        return converted.dt.to_period("M")
-
-    if date_column in df.columns:
-        converted = pd.to_datetime(df[date_column], dayfirst=True, errors="coerce")
-        return converted.dt.to_period("M")
-
-    empty = pd.Series(pd.PeriodIndex([pd.NaT] * len(df), freq="M"), index=df.index)
-    return empty
 
 
 def _build_return_view(
@@ -279,7 +199,7 @@ def _build_return_view(
     if not sales_lookup.empty:
         sales_lookup["periodo"] = sales_lookup["periodo"].astype(str)
         if "cd_produto" in sales_lookup.columns:
-            sales_lookup["cd_produto"] = _normalize_product_codes(sales_lookup["cd_produto"])
+            sales_lookup["cd_produto"] = normalize_product_codes(sales_lookup["cd_produto"])
 
     # merge inicial para trazer 'itens_vendidos'
     result = devolucoes.merge(
@@ -295,10 +215,14 @@ def _build_return_view(
             result["itens_vendidos"] = result.get("itens_vendidos", pd.Series(0.0, index=result.index)).fillna(0.0)
         else:
             # cria mapa (periodo, cd_produto) -> soma unidades
-            direct_totals = _build_sales_totals(sales_base)
-            direct_totals["periodo"] = direct_totals["periodo"].astype(str)
-            if "cd_produto" in direct_totals.columns:
-                direct_totals["cd_produto"] = _normalize_product_codes(direct_totals["cd_produto"])
+            direct_totals = build_period_product_totals(
+                sales_base,
+                period_column="periodo",
+                date_column="data",
+                product_column="cd_produto",
+                allowed_periods=period_filter,
+                unit_result_name="itens_vendidos",
+            )
             # merge direto com direct_totals (garante cover)
             result = result.merge(
                 direct_totals,
