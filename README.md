@@ -1,3 +1,214 @@
+# Sales Insight Toolkit CLI
+
+Ferramenta interativa em Python para explorar vendas históricas, devoluções e performance comercial a partir da planilha `BASE.xlsx`. Os relatórios são gerados em Excel (uma aba por visão) e organizados por análise, permitindo comparar períodos, categorias e anúncios com indicadores consistentes.
+
+---
+
+## Destaques
+
+- Carregamento único com cache opcional em `.cache/` e barra de progresso percentuais reais.
+- Normalização automática de colunas de venda e devolução, incluindo cálculo de métricas derivadas (`rbld`, margem, taxas, preços unitários).
+- CLI interativa para escolher análise, período, categoria ou lista de anúncios, parâmetros de ranking e personalização da janela recente.
+- Exportação padronizada para a pasta `output/` com planilhas formatadas como tabelas do Excel.
+
+---
+
+## Estrutura do Projeto
+
+```
+main.py                  # ponto de entrada da aplicação
+analysis/
+      __init__.py
+      cli.py               # fluxo interativo, prompts e exportação
+      data_loader.py       # leitura, normalização e cache do dataset
+      exporters.py         # utilitário para gerar arquivos .xlsx
+      formatting.py        # tratamento de colunas percentuais
+      reporting/
+            __init__.py
+            common_returns.py  # helpers compartilhados para devoluções
+            returns.py         # visão mensal de devoluções
+            potential.py       # identificação de SKUs com queda recente
+            top_history.py     # ranking histórico de recorrência
+            low_cost.py        # produtos baratos com boa reputação
+            product_focus.py   # perspectiva consolidada diária/mensal
+output/
+```
+
+---
+
+## Pré-requisitos
+
+1. Python 3.10 ou superior instalado.
+2. Ambiente virtual recomendado:
+
+    ```powershell
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    pip install pandas numpy openpyxl xlsxwriter
+    ```
+
+3. Planilha `BASE.xlsx` na raiz com abas `VENDA`, `VENDA01`, ... e, opcionalmente, `DEVOLUCAO`, `DEVOLUCAO01`, ... contendo as colunas abaixo.
+
+---
+
+## Dados de Entrada
+
+### Aba de vendas (`VENDA`, `VENDA01`, ...)
+
+| Coluna original (Excel)              | Coluna normalizada | Descrição resumida                                                |
+|-------------------------------------|--------------------|-------------------------------------------------------------------|
+| DATA_VENDA                          | `data`             | Data da venda (`dd/mm/aaaa`), usada para gerar `periodo` e `ano_mes`. |
+| NOTA_FISCAL_VENDA                   | `nr_nota_fiscal`   | Identificador da nota/pedido.                                     |
+| CATEGORIA                           | `categoria`        | Segmento ou linha de produto.                                     |
+| CD_ANUNCIO                          | `cd_anuncio`       | Código do anúncio comercial.                                     |
+| DS_ANUNCIO                          | `ds_anuncio`       | Descrição comercial do anúncio.                                   |
+| CD_PRODUTO                          | `cd_produto`       | Código interno do SKU.                                            |
+| DS_PRODUTO                          | `ds_produto`       | Nome do SKU.                                                      |
+| CD_FABRICANTE                       | `cd_fabricante`    | Código do fabricante/parceiro.                                    |
+| TP_ANUNCIO                          | `tp_anuncio`       | Tipo de anúncio (kit, variação, etc.).                            |
+| Unidades                            | `qtd_sku`          | Quantidade vendida na linha da nota.                              |
+| Preco Medio Unit$ / Preço Medio Unit$ | `preco_unitario` | Preço médio unitário informado na planilha.                       |
+| Custo Medio$ / Custo Médio$         | `custo_produto`    | Custo médio unitário (valores somados posteriormente).            |
+| Perc Margem Bruta% RBLD             | `perc_margem_bruta`| Margem bruta informada (normalizada para faixa 0–1).              |
+| Receita Bruta (-) Devoluções Tot$   | `rbld`             | Receita líquida de devoluções, usada como base de preço unitário. |
+| TP_REGISTRO                         | `tp_registro`      | Indicador interno (linhas não “venda” são ignoradas).             |
+
+### Abas de devolução (`DEVOLUCAO`, `DEVOLUCAO01`, ...)
+
+| Coluna original (Excel)              | Coluna normalizada        | Descrição resumida                                             |
+|-------------------------------------|---------------------------|----------------------------------------------------------------|
+| DATA_VENDA                          | `data_venda`              | Data da venda que originou a devolução.                         |
+| DATA_DEVOLUCAO                      | `data_devolucao`          | Data em que a devolução foi processada.                        |
+| NOTA_FISCAL_VENDA                   | `nr_nota_fiscal`          | Nota fiscal original vinculada ao retorno.                     |
+| NOTA_FISCAL_DEVOLUCAO               | `nr_nota_devolucao`       | Nota fiscal da devolução (quando houver).                      |
+| CATEGORIA                           | `categoria`               | Segmento do SKU devolvido.                                     |
+| CD_ANUNCIO                          | `cd_anuncio`              | Código do anúncio devolvido (fallback para `cd_produto`).      |
+| DS_ANUNCIO                          | `ds_anuncio`              | Descrição associada à devolução.                               |
+| CD_PRODUTO                          | `cd_produto`              | Código interno do SKU devolvido.                               |
+| CD_FABRICANTE                       | `cd_fabricante`           | Código do fabricante.                                          |
+| DS_PRODUTO                          | `ds_produto`              | Nome do SKU devolvido.                                         |
+| TP_ANUNCIO                          | `tp_anuncio`              | Tipo de anúncio devolvido.                                     |
+| Unidades                            | `qtd_sku`                 | Quantidade devolvida.                                          |
+| Devolução Receita Bruta Tot$        | `devolucao_receita_bruta` | Valor bruto devolvido.                                         |
+| Custo Medio$ / Custo Médio$         | `custo_produto`           | Custo unitário informado na devolução.                         |
+| Preco Medio Unit$ / Preço Medio Unit$ | `preco_unitario`       | Preço unitário registrado na devolução.                        |
+| TP_REGISTRO                         | `tp_registro`             | Indicador interno (linhas não “devolução” são removidas).      |
+
+> O carregador aceita múltiplas abas que compartilham o mesmo prefixo (`VENDA01`, `VENDA02`, ...) e consolida tudo em um único DataFrame.
+
+---
+
+## Processamento Automático do Carregador
+
+- **Datas e períodos**: converte `data` para `datetime` (interpretação `dayfirst`), gera `periodo` (`Period[M]`) e `ano_mes` (`YYYYMM`).
+- **Normalização textual**: remove espaços extras e substitui valores ausentes em `categoria`, `cd_anuncio`, `cd_produto`, `ds_anuncio`, `ds_produto`, `cd_fabricante`, `tp_anuncio` e `nr_nota_fiscal` por padrões seguros.
+- **Coerção numérica**: limpa símbolos (`%`, vírgula decimal) e converte para `float`. Percentuais acima de 1 viram escala 0–1.
+- **Métricas derivadas**:
+   - `receita_bruta_calc = preco_unitario * qtd_sku`.
+   - `rbld` recebe `receita_bruta_calc` quando o valor informado é vazio ou zero.
+   - `lucro_bruto_estimado = receita_bruta_calc * perc_margem_bruta`.
+   - `taxa_devolucao` calculada com os dados de devolução vinculados por nota e SKU.
+- **Dados de devolução**: o merge adiciona `qtd_devolvido` e `devolucao_receita_bruta` ao DataFrame principal e salva o conjunto completo de devoluções em `df.attrs["returns_data"]` para uso nas análises.
+- **Cache**: ao finalizar o carregamento, o dataset tratado é salvo em `.cache/<arquivo>_<assinatura>.pkl`. Se `BASE.xlsx` não mudar, a próxima execução reaproveita esse cache e pula a leitura do Excel.
+- **Progresso**: a CLI mostra progresso percentual real durante a leitura das abas e exibe um spinner dedicado durante o cálculo das métricas históricas.
+
+---
+
+## Executando a Aplicação
+
+```powershell
+python main.py
+```
+
+Fluxo interativo:
+
+1. Selecione a análise desejada.
+2. Visualize os períodos disponíveis e informe as datas inicial/final (`DD/MM/AAAA`) ou pressione Enter para considerar todo o histórico.
+3. Filtre por categoria (todas ou uma específica). Na análise de performance (`PRODUCT_FOCUS`) é possível optar por informar manualmente uma lista de `CD_ANUNCIO` em vez da categoria.
+4. Informe parâmetros adicionais quando solicitados:
+    - Tamanho do ranking (`POTENTIAL`, `TOP_SELLERS`).
+    - Janela recente personalizada (`POTENTIAL`).
+5. Aguarde a geração do arquivo Excel (o caminho completo é exibido no final). Todos os relatórios são salvos em `output/` com timestamp no nome.
+6. Escolha executar outra análise ou encerrar.
+
+---
+
+## Análises Disponíveis
+
+### 1. Devoluções (`RETURN`)
+
+- **Objetivo**: comparar devoluções pelo mês da venda original e pelo mês em que a devolução ocorreu, sem distorcer o denominador de itens vendidos.
+- **Como calcula**:
+   - Normaliza a base de devoluções, garantindo `pedido_devolucao_id` e `periodo_venda`/`periodo_devolucao`.
+   - Cruza devoluções com o volume vendido (`cd_produto` + `periodo`) para medir taxas consistentes.
+- **Planilhas geradas**:
+   - `Dev. atrelada ao mês da venda`: devolução contabilizada no mês da venda original.
+   - `Analise de Dev. mensal`: devolução contabilizada no mês em que foi processada.
+- **Colunas chave**: `ano`, `mes_extenso`, `mes_abreviado`, `periodo`, `cd_produto`, `ds_produto`, `itens_vendidos`, `itens_devolvidos`, `pedidos_devolvidos`, `receita_devolucao`, `taxa_devolucao`.
+
+### 2. SKU em Potencial (`POTENTIAL`)
+
+- **Objetivo**: destacar anúncios com histórico sólido que sofreram queda recente e podem ser reativados.
+- **Como calcula**:
+   - Divide o histórico entre janela recente (últimos meses definidos pela CLI) e período histórico.
+   - Calcula médias de quantidade, receita, pedidos, devolução, margem e preço mínimo (`_preco_rbld`).
+   - Aplica filtros mínimos: pelo menos três meses históricos, volume histórico acima da mediana, queda percentual >= 30% e taxa de devolução recente <= 20%.
+   - Classifica pelo `potencial_score`, que combina queda absoluta, meses válidos e taxa de devolução histórica.
+- **Planilhas geradas**:
+   - `potenciais`: ranking final com `categoria`, `cd_produto`, `cd_anuncio`, `queda_abs_qtd`, `queda_pct_qtd`, `potencial_score`, métricas históricas e recentes, preços mínimos do intervalo e do histórico completo.
+   - `skus_potenciais_mensal`: histórico mensal dos SKUs selecionados com `preco_medio_vendido`, `preco_min_periodo`, devoluções e margens.
+
+### 3. Top SKUs Históricos (`TOP_SELLERS`)
+
+- **Objetivo**: ranquear anúncios com maior consistência de venda ao longo do tempo.
+- **Como calcula**:
+   - Soma pedidos, quantidade, receita e devoluções por anúncio.
+   - Impõe recorrência mínima de três meses com venda.
+   - Calcula ticket médio, preço médio do intervalo e taxas usando `rbld` dividido por quantidade.
+   - Integra dados de devolução por SKU para trazer devolução total, pedidos devolvidos e receita devolvida.
+- **Planilhas geradas**:
+   - `ranking`: top N (configurável) com `categoria`, `cd_anuncio`, `cd_produto`, `meses_com_venda`, `quantidade_total`, `pedidos_total`, `receita_total`, margens, devoluções, tickets e preços mínimos (intervalo e histórico completo).
+   - `detalhe_mensal`: evolução mensal dos SKUs ranqueados com `ano`, `mes_abrev`, `preco_medio_unitario_vendido`, `preco_min_periodo`, devoluções e preços de referência.
+
+### 4. Produtos de Baixo Custo para Reputação (`REPUTATION`)
+
+- **Objetivo**: encontrar anúncios baratos, com giro e baixa devolução para reforço de reputação ou campanhas de entrada.
+- **Como calcula**:
+   - Agrega itens por anúncio e ordena pelo percentil de custo unitário (`cost_percentile`, padrão 25%).
+   - Filtra por quantidade mínima (`min_quantity`, padrão 50) e taxa de devolução máxima (`max_return_rate`, padrão 5%).
+   - Calcula `potencial_reputacao_score = ((1 - taxa_devolucao) * itens_vendidos_total) / custo_medio_unitario`.
+- **Planilha gerada**:
+   - `produtos_indicados`: lista com `categoria`, `cd_anuncio`, `cd_produto`, volumes, pedidos, receita, custos, margens, devoluções, ticket médio e preços mínimos (intervalo e histórico total).
+
+### 5. Performance Focada por Produto (`PRODUCT_FOCUS`)
+
+- **Objetivo**: diagnosticar rapidamente a performance comercial em um intervalo, filtrando por categoria ou lista de anúncios específicos.
+- **Como calcula**:
+   - Normaliza período e data, agrupa por diferentes granularidades (total, diário e mensal).
+   - Métricas centralizadas: `qtd_pedidos`, `itens_vendidos`, `receita`, `ticket_medio`, `preco_medio_vendido_unitario`, `preco_medio_praticado_unitario` (derivado de `rbld`), `preco_min_unitario_periodo`, `margem_media`, `lucro_bruto_estimado`, `custo_produto` e devoluções vinculadas.
+- **Planilhas geradas**:
+   - `resumo_produtos`: visão consolidada por anúncio com dados de fabricante, tipo de anúncio e categoria.
+   - `analise_diaria`: evolução diária com preços praticados e devoluções.
+   - `analise_mensal`: agregação mensal adicionando `ano` e `mes_abrev` para leitura rápida.
+
+Todas as análises que utilizam preços mínimos recebem as colunas `preco_min_unitario_intervalo` (menor preço no recorte analisado) e `preco_min_unitario_historico_total` (menor preço da série completa), calculadas a partir do mapa gerado no carregamento inicial.
+
+---
+
+## Personalização
+
+- Ajuste os parâmetros padrão diretamente nos módulos em `analysis/reporting/` (`RECENT_WINDOW`, `MIN_DROP_RATIO`, `COST_PERCENTILE`, `MIN_MONTHS_RECURRENCE`, etc.).
+- Para alterar filtros ou colunas exportadas, edite os `DataFrame` construídos nas funções `build_*_analysis` correspondentes.
+- O comportamento do cache pode ser ajustado passando `enable_cache=False` ou um diretório diferente ao chamar `load_sales_dataset`.
+
+---
+
+## Boas Práticas
+
+- Mantenha a planilha de origem alinhada às colunas esperadas e utilize abas sequenciais quando precisar fracionar a base.
+- Revise os resultados com as equipes comercial e operacional para validar critérios de corte e thresholds.
+- Considere adicionar testes automatizados ao introduzir novas regras ou análises para garantir consistência futura.
+
 # Sales Insight Toolkit
 
 Ferramenta interativa em Python para explorar vendas históricas, devoluções e estratégia de portfólio a partir da base `BASE.xlsx`. O projeto organiza a lógica em módulos independentes e gera relatórios em arquivos Excel separados por análise.
