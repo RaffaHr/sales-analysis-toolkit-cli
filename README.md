@@ -178,7 +178,7 @@ Cada aba traz as colunas: `ano`, `mes_extenso`, `mes_abreviado`, `periodo` (`YYY
 
 **Relatórios gerados**:
 - `potenciais`: top N (rank escolhido) com quedas percentuais, taxas de devolução, margens em `%`, além dos preços mínimos (`preco_min_intervalo`, `preco_min_historico_total`).
-- `hist_mensal`: histórico apenas dos anúncios selecionados, trazendo o preço mínimo por período e referências históricas para entender a trajetória de cada item.
+- `skus_potenciais_mensal`: histórico apenas dos anúncios selecionados, trazendo o preço mínimo por período e referências históricas para entender a trajetória de cada item.
 
 **Intuito**: evidenciar oportunidades para campanhas de reativação, ajustes de estoque ou revisão de posicionamento comercial.
 

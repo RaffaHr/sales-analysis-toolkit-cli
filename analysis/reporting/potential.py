@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import numpy as np
 import pandas as pd
 
 from ..formatting import format_percentage_columns
+from . import returns as returns_report
+from .common_returns import (
+    build_period_product_totals,
+    ensure_period_series,
+    normalize_product_codes,
+)
 
 RECENT_WINDOW = 3
 MIN_HIST_MONTHS = 3
@@ -46,25 +52,83 @@ def build_potential_sku_analysis(
     Como o produto tinha desempenho constante por quase dois anos e despencou nos meses recentes, ele entra como candidato: o histórico mostra potencial, a janela recente sinaliza queda e, se a taxa de devolução/margem estiver aceitável, o relatório classifica esse SKU como “em potencial".
     """
     data = _filter_by_category(df, category)
+
+    if "cd_produto" in data.columns:
+        data["cd_produto"] = normalize_product_codes(data["cd_produto"])
+    else:
+        data["cd_produto"] = normalize_product_codes("", index=data.index)
+
+    period_series = ensure_period_series(data, "periodo", "data")
+    data["periodo"] = period_series.astype(str)
+    allowed_periods: Set[str] = {
+        str(p) for p in period_series.dropna().tolist() if str(p) and str(p).lower() != "nat"
+    }
+
+    produto_map = pd.Series(dtype="object")
+    if "cd_anuncio" in data.columns:
+        produto_map = (
+            data.loc[data["cd_anuncio"].notna(), ["cd_anuncio", "cd_produto"]]
+            .drop_duplicates(subset=["cd_anuncio"])
+            .set_index("cd_anuncio")["cd_produto"]
+        )
+
+    categoria_map = None
+    categoria_default = category if category is not None else ""
+    if "categoria" in data.columns:
+        categoria_map = (
+            data.loc[data["cd_anuncio"].notna(), ["cd_anuncio", "categoria"]]
+            .drop_duplicates(subset=["cd_anuncio"])
+            .set_index("cd_anuncio")["categoria"]
+        )
+
+    returns_raw = data.attrs.get("returns_data", pd.DataFrame())
+    returns_filtered = returns_report._filter_returns_dataset(returns_raw, category)
+    return_totals = _build_returns_totals_by_sale_period(returns_filtered, allowed_periods)
+
     interval_prices = (
         data.groupby("cd_anuncio")["preco_vendido"].min()
         .replace([np.inf, -np.inf], np.nan)
     )
     grouped = (
-        data.groupby(["periodo", "cd_anuncio", "ds_anuncio"], as_index=False)
+        data.groupby(["periodo", "cd_produto", "cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             qtd_vendida=("qtd_sku", "sum"),
             pedidos=("nr_nota_fiscal", "nunique"),
             receita=("rbld", "sum"),
             custo=("custo_total", "sum"),
             margem_media=("perc_margem_bruta", "mean"),
-            qtd_devolvida=("qtd_devolvido", "sum"),
             preco_min_periodo=("preco_vendido", "min"),
         )
     )
 
+    if not return_totals.empty:
+        grouped = grouped.merge(
+            return_totals,
+            on=["periodo", "cd_produto"],
+            how="left",
+        )
+
+    if "qtd_devolvida_ret" in grouped.columns:
+        grouped["qtd_devolvida"] = grouped["qtd_devolvida_ret"].fillna(0.0)
+        grouped["pedidos_devolvidos"] = (
+            grouped["pedidos_devolvidos_ret"].fillna(0).astype(int)
+        )
+        grouped["receita_devolucao"] = grouped["receita_devolucao_ret"].fillna(0.0)
+        grouped.drop(
+            columns=[col for col in [
+                "qtd_devolvida_ret",
+                "pedidos_devolvidos_ret",
+                "receita_devolucao_ret",
+            ] if col in grouped.columns],
+            inplace=True,
+        )
+    else:
+        grouped["qtd_devolvida"] = 0.0
+        grouped["pedidos_devolvidos"] = 0
+        grouped["receita_devolucao"] = 0.0
+
     if grouped.empty:
-        return {"potenciais": grouped, "hist_mensal": grouped}
+        return {"potenciais": grouped, "skus_potenciais_mensal": grouped}
 
     grouped["periodo"] = grouped["periodo"].astype(str)
     grouped.sort_values("periodo", inplace=True)
@@ -75,10 +139,10 @@ def build_potential_sku_analysis(
         selected = sorted({str(p) for p in recent_periods})
         valid_selected = [p for p in selected if p in available_periods]
         if not valid_selected:
-            return {"potenciais": grouped.head(0), "hist_mensal": grouped.head(0)}
+            return {"potenciais": grouped.head(0), "skus_potenciais_mensal": grouped.head(0)}
         historical_periods = [p for p in available_periods if p not in valid_selected]
         if not historical_periods:
-            return {"potenciais": grouped.head(0), "hist_mensal": grouped.head(0)}
+            return {"potenciais": grouped.head(0), "skus_potenciais_mensal": grouped.head(0)}
         recent_periods = np.array(valid_selected)
         historical_periods = np.array(historical_periods)
     else:
@@ -133,11 +197,32 @@ def build_potential_sku_analysis(
 
     selecionados = candidatos.head(rank_size).copy()
 
+    if "cd_anuncio" in selecionados.columns:
+        cd_produto_values = selecionados["cd_anuncio"].map(produto_map).fillna("")
+        selecionados.insert(0, "cd_produto", cd_produto_values)
+        if categoria_map is not None:
+            categoria_values = selecionados["cd_anuncio"].map(categoria_map).fillna(categoria_default)
+        else:
+            categoria_values = pd.Series(categoria_default, index=selecionados.index)
+        selecionados.insert(1, "categoria", categoria_values)
+
     if selecionados.empty:
         historico_focado = grouped.head(0)
     else:
         foco = selecionados["cd_anuncio"].unique()
         historico_focado = grouped[grouped["cd_anuncio"].isin(foco)].copy()
+
+    if "cd_anuncio" in historico_focado.columns:
+        if categoria_map is not None:
+            historico_categoria = historico_focado["cd_anuncio"].map(categoria_map).fillna(categoria_default)
+        else:
+            historico_categoria = pd.Series(categoria_default, index=historico_focado.index)
+        insert_pos = (
+            historico_focado.columns.get_loc("cd_produto") + 1
+            if "cd_produto" in historico_focado.columns
+            else 0
+        )
+        historico_focado.insert(insert_pos, "categoria", historico_categoria)
 
     historico_focado["preco_medio_vendido"] = np.where(
         historico_focado["qtd_vendida"] > 0,
@@ -176,8 +261,76 @@ def build_potential_sku_analysis(
 
     return {
         "potenciais": selecionados_fmt,
-        "hist_mensal": historico_fmt,
+        "skus_potenciais_mensal": historico_fmt,
     }
+
+
+def _build_returns_totals_by_sale_period(
+    returns_df: pd.DataFrame,
+    allowed_periods: Set[str],
+) -> pd.DataFrame:
+    if returns_df is None or returns_df.empty or not allowed_periods:
+        return pd.DataFrame(
+            columns=[
+                "periodo",
+                "cd_produto",
+                "qtd_devolvida_ret",
+                "pedidos_devolvidos_ret",
+                "receita_devolucao_ret",
+            ]
+        )
+
+    prepared = returns_report._prepare_returns_dataset(returns_df)
+    if prepared.empty:
+        return pd.DataFrame(
+            columns=[
+                "periodo",
+                "cd_produto",
+                "qtd_devolvida_ret",
+                "pedidos_devolvidos_ret",
+                "receita_devolucao_ret",
+            ]
+        )
+
+    period_series = ensure_period_series(
+        prepared,
+        "periodo_venda",
+        "data_venda",
+    )
+    prepared = prepared.copy()
+    prepared["periodo"] = period_series.astype(str)
+    prepared = prepared[prepared["periodo"].isin(allowed_periods)].copy()
+    if prepared.empty:
+        return pd.DataFrame(
+            columns=[
+                "periodo",
+                "cd_produto",
+                "qtd_devolvida_ret",
+                "pedidos_devolvidos_ret",
+                "receita_devolucao_ret",
+            ]
+        )
+
+    prepared["cd_produto"] = normalize_product_codes(
+        prepared.get("cd_produto", ""),
+        index=prepared.index,
+    )
+
+    totals = build_period_product_totals(
+        prepared,
+        period_column="periodo",
+        product_column="cd_produto",
+        allowed_periods=allowed_periods,
+        units_column="qtd_sku",
+        unit_result_name="qtd_devolvida_ret",
+        include_order_count=True,
+        order_result_name="pedidos_devolvidos_ret",
+        extra_aggs={
+            "devolucao_receita_bruta": ("receita_devolucao_ret", "sum"),
+        },
+    )
+
+    return totals
 
 
 def _aggregate_window(df: pd.DataFrame, periods: np.ndarray, suffix: str) -> pd.DataFrame:
@@ -234,5 +387,8 @@ def _aggregate_window(df: pd.DataFrame, periods: np.ndarray, suffix: str) -> pd.
 
 def _filter_by_category(df: pd.DataFrame, category: Optional[str]) -> pd.DataFrame:
     if not category:
-        return df.copy()
-    return df[df["categoria"] == category].copy()
+        filtered = df.copy()
+    else:
+        filtered = df[df["categoria"] == category].copy()
+    filtered.attrs = dict(df.attrs)
+    return filtered
