@@ -21,8 +21,8 @@ SALES_COLUMN_MAP = {
     "TP_ANUNCIO": "tp_anuncio",
     "Custo Medio$": "custo_produto",
     "Custo Médio$": "custo_produto",
-    "Preco Medio Unit$": "preco_vendido",
-    "Preço Medio Unit$": "preco_vendido",
+    "Preco Medio Unit$": "preco_unitario",
+    "Preço Medio Unit$": "preco_unitario",
     "Unidades": "qtd_sku",
     "Perc Margem Bruta% RBLD": "perc_margem_bruta",
     "Receita Bruta (-) Devoluções Tot$": "rbld",
@@ -43,8 +43,8 @@ RETURN_COLUMN_MAP = {
     "TP_ANUNCIO": "tp_anuncio",
     "Custo Medio$": "custo_produto",
     "Custo Médio$": "custo_produto",
-    "Preco Medio Unit$": "preco_vendido",
-    "Preço Medio Unit$": "preco_vendido",
+    "Preco Medio Unit$": "preco_unitario",
+    "Preço Medio Unit$": "preco_unitario",
     "Unidades": "qtd_sku",
     "Devolução Receita Bruta Tot$": "devolucao_receita_bruta",
     "TP_REGISTRO": "tp_registro",
@@ -90,7 +90,7 @@ RETURN_DTYPES = {
 
 SALES_NUMERIC_COLUMNS = [
     "custo_produto",
-    "preco_vendido",
+    "preco_unitario",
     "qtd_sku",
     "perc_margem_bruta",
     "rbld",
@@ -98,7 +98,7 @@ SALES_NUMERIC_COLUMNS = [
 
 RETURN_NUMERIC_COLUMNS = [
     "custo_produto",
-    "preco_vendido",
+    "preco_unitario",
     "qtd_sku",
     "devolucao_receita_bruta",
 ]
@@ -379,16 +379,15 @@ class SalesDataLoader:
             df["devolucao_receita_bruta"] = 0.0
         df["devolucao_receita_bruta"] = df["devolucao_receita_bruta"].fillna(0.0)
 
-        df["preco_vendido"] = df.get("preco_vendido", 0).fillna(0.0)
+        df["preco_unitario"] = df.get("preco_unitario", 0).fillna(0.0)
         df["custo_produto"] = df.get("custo_produto", 0).fillna(0.0)
         df["qtd_sku"] = df.get("qtd_sku", 0).fillna(0.0)
         df["perc_margem_bruta"] = df.get("perc_margem_bruta", 0).fillna(0.0)
         df["rbld"] = df.get("rbld", 0).fillna(0.0)
 
-        df["receita_bruta_calc"] = df["preco_vendido"] * df["qtd_sku"]
+        df["receita_bruta_calc"] = df["preco_unitario"] * df["qtd_sku"]
         fallback_mask = df["rbld"] <= 0
         df.loc[fallback_mask, "rbld"] = df.loc[fallback_mask, "receita_bruta_calc"]
-        df["custo_total"] = df["custo_produto"] * df["qtd_sku"]
         df["lucro_bruto_estimado"] = df["receita_bruta_calc"] * df["perc_margem_bruta"]
 
         base = df["qtd_sku"].to_numpy(dtype=float)

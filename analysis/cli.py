@@ -30,26 +30,56 @@ class _ProgressPrinter:
 
     def __init__(self, label: str) -> None:
         self._label = label.strip()
-        self._last_percent = -1
+        self._display_percent = 0
+        self._target_percent = 0
         self._finished = False
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._started = False
 
     def update(self, processed: int, total: int) -> None:
         percent = 100 if total <= 0 else int(round((processed / total) * 100))
         percent = max(0, min(100, percent))
-        if percent != self._last_percent or processed >= total:
-            sys.stdout.write(f"\r{self._label}: {percent:3d}%")
-            sys.stdout.flush()
-            self._last_percent = percent
-        if processed >= total and not self._finished:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            self._finished = True
+        with self._lock:
+            self._target_percent = max(self._target_percent, percent)
+        if not self._started:
+            self._thread.start()
+            self._started = True
 
     def finish(self) -> None:
-        if not self._finished:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+        with self._lock:
+            self._target_percent = max(self._target_percent, 100)
             self._finished = True
+        if not self._started:
+            self._thread.start()
+            self._started = True
+
+        while True:
+            with self._lock:
+                if self._display_percent >= self._target_percent:
+                    break
+            time.sleep(0.05)
+
+        self._stop_event.set()
+        self._thread.join()
+        sys.stdout.write(f"\r{self._label}: {self._target_percent:3d}%\n")
+        sys.stdout.flush()
+
+    def _animate(self) -> None:
+        while not self._stop_event.is_set():
+            with self._lock:
+                target = self._target_percent
+                display = self._display_percent
+                if display < target:
+                    step = max(1, (target - display) // 5 or 1)
+                    display = min(target, display + step)
+                    self._display_percent = display
+                elif self._finished and display >= target:
+                    break
+            sys.stdout.write(f"\r{self._label}: {display:3d}%")
+            sys.stdout.flush()
+            time.sleep(0.05)
 
 
 class _ConsoleSpinner:
@@ -313,9 +343,14 @@ def _prompt_focus_filter_mode() -> str:
 
 
 def _compute_historical_lowest_prices(df: pd.DataFrame) -> Dict[str, float]:
-    valid = df.loc[df["preco_vendido"].notna()]
+    price_col = "preco_unitario" if "preco_unitario" in df.columns else "preco_vendido"
+    if price_col not in df.columns:
+        return {}
+    valid = df.loc[df[price_col].notna()]
+    if valid.empty:
+        return {}
     return (
-        valid.groupby("cd_anuncio")["preco_vendido"].min()
+        valid.groupby("cd_anuncio")[price_col].min()
         .round(2)
         .to_dict()
     )

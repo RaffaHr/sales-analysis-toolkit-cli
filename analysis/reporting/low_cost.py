@@ -34,24 +34,32 @@ def build_low_cost_reputation_analysis(
     allowed_periods: Set[str] = {
         p for p in data["periodo"].dropna().astype(str) if p and p.lower() != "nat"
     }
-    returns_totals = _compute_returns_totals(data, category, allowed_periods)
+    receita_total = pd.to_numeric(data.get("rbld", 0), errors="coerce")
+    quantidade = pd.to_numeric(data.get("qtd_sku", 0), errors="coerce")
+    preco_rbld_unitario = np.where(quantidade > 0, receita_total / quantidade, np.nan)
+    preco_rbld_unitario = np.where(np.isfinite(preco_rbld_unitario), preco_rbld_unitario, np.nan)
+    data_pricing = data.assign(_preco_rbld=preco_rbld_unitario)
+    data_pricing.attrs = dict(data.attrs)
+    returns_totals = _compute_returns_totals(data_pricing, category, allowed_periods)
+    categoria_default = category if category is not None else ""
 
     interval_prices = (
-        data.groupby("cd_anuncio")["preco_vendido"].min()
+        data_pricing.groupby("cd_anuncio")["_preco_rbld"].min()
         .replace([np.inf, -np.inf], np.nan)
     )
 
     aggregated = (
-        data.groupby(["cd_anuncio", "ds_anuncio"], as_index=False)
+        data_pricing.groupby(["cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
-            quantidade_total=("qtd_sku", "sum"),
+            itens_vendidos_total=("qtd_sku", "sum"),
             pedidos_total=("nr_nota_fiscal", "nunique"),
             receita_total=("rbld", "sum"),
             custo_medio_unitario=("custo_produto", "mean"),
-            custo_total=("custo_total", "sum"),
-            devolucao_total=("qtd_devolvido", "sum"),
-            receita_devolucao_total=("devolucao_receita_bruta", "sum"),
+            custo_produto=("custo_produto", "sum"),
+            itens_devolvidos_total=("qtd_devolvido", "sum"),
+            receita_itens_devolvidos_total=("devolucao_receita_bruta", "sum"),
             margem_media=("perc_margem_bruta", "mean"),
+            categoria=("categoria", "first"),
             cd_produto=("cd_produto", "first"),
         )
     )
@@ -60,18 +68,25 @@ def build_low_cost_reputation_analysis(
         return {"produtos_indicados": aggregated}
 
     aggregated.drop(
-        columns=["devolucao_total", "receita_devolucao_total"],
+        columns=["itens_devolvidos_total", "receita_itens_devolvidos_total"],
         inplace=True,
         errors="ignore",
     )
     aggregated = aggregated.merge(returns_totals, on="cd_produto", how="left")
-    aggregated["devolucao_total"] = aggregated.get("devolucao_total", 0.0).fillna(0.0)
+    aggregated.rename(
+        columns={
+            "receita_itens_devolvidos_total": "receita_devolucao_total",
+        },
+        inplace=True,
+    )
+    aggregated["itens_devolvidos_total"] = aggregated.get("itens_devolvidos_total", 0.0).fillna(0.0)
     aggregated["receita_devolucao_total"] = aggregated.get("receita_devolucao_total", 0.0).fillna(0.0)
     aggregated["pedidos_devolvidos_total"] = aggregated.get("pedidos_devolvidos_total", 0).fillna(0).astype(int)
+    aggregated["categoria"] = aggregated.get("categoria", categoria_default).fillna(categoria_default)
 
     aggregated["taxa_devolucao"] = np.where(
-        aggregated["quantidade_total"] > 0,
-        aggregated["devolucao_total"] / aggregated["quantidade_total"],
+        aggregated["itens_vendidos_total"] > 0,
+        aggregated["itens_devolvidos_total"] / aggregated["itens_vendidos_total"],
         0,
     )
     aggregated["ticket_medio_estimado"] = np.where(
@@ -84,18 +99,18 @@ def build_low_cost_reputation_analysis(
 
     selecionados = aggregated[
         (aggregated["custo_medio_unitario"] <= custo_threshold)
-        & (aggregated["quantidade_total"] >= min_quantity)
+        & (aggregated["itens_vendidos_total"] >= min_quantity)
         & (aggregated["taxa_devolucao"] <= max_return_rate)
     ].copy()
 
     selecionados.sort_values(
-        ["custo_medio_unitario", "quantidade_total"],
+        ["custo_medio_unitario", "itens_vendidos_total"],
         ascending=[True, False],
         inplace=True,
     )
 
     selecionados["potencial_reputacao_score"] = (
-        (1 - selecionados["taxa_devolucao"]) * selecionados["quantidade_total"]
+        (1 - selecionados["taxa_devolucao"]) * selecionados["itens_vendidos_total"]
     ) / np.where(
         selecionados["custo_medio_unitario"] > 0,
         selecionados["custo_medio_unitario"],
@@ -106,21 +121,48 @@ def build_low_cost_reputation_analysis(
         ascending=False,
         inplace=True,
     )
+    if "categoria" not in selecionados.columns:
+        selecionados["categoria"] = categoria_default
 
-    selecionados["preco_min_intervalo"] = pd.to_numeric(
+    selecionados["preco_min_unitario_intervalo"] = pd.to_numeric(
         selecionados["cd_anuncio"].map(interval_prices), errors="coerce"
     ).round(2)
     if historical_prices:
-        selecionados["preco_min_historico_total"] = pd.to_numeric(
+        selecionados["preco_min_unitario_historico_total"] = pd.to_numeric(
             selecionados["cd_anuncio"].map(historical_prices), errors="coerce"
         ).round(2)
     else:
-        selecionados["preco_min_historico_total"] = np.nan
+        selecionados["preco_min_unitario_historico_total"] = np.nan
 
     selecionados_fmt = format_percentage_columns(
         selecionados,
         ["taxa_devolucao", "margem_media"],
     )
+    final_order = [
+        "categoria",
+        "cd_anuncio",
+        "cd_produto",
+        "ds_anuncio",
+        "itens_vendidos_total",
+        "pedidos_total",
+        "receita_total",
+        "custo_medio_unitario",
+        "custo_produto",
+        "margem_media",
+        "itens_devolvidos_total",
+        "pedidos_devolvidos_total",
+        "receita_devolucao_total",
+        "taxa_devolucao",
+        "ticket_medio_estimado",
+        "preco_min_unitario_intervalo",
+        "preco_min_unitario_historico_total",
+        "potencial_reputacao_score",
+    ]
+    if "categoria" not in selecionados_fmt.columns:
+        selecionados_fmt["categoria"] = categoria_default
+    if "receita_devolucao_total" not in selecionados_fmt.columns:
+        selecionados_fmt["receita_devolucao_total"] = 0.0
+    selecionados_fmt = selecionados_fmt[[col for col in final_order if col in selecionados_fmt.columns]]
 
     return {"produtos_indicados": selecionados_fmt}
 
@@ -146,7 +188,7 @@ def _compute_returns_totals(
         return pd.DataFrame(
             columns=[
                 "cd_produto",
-                "devolucao_total",
+                "itens_devolvidos_total",
                 "pedidos_devolvidos_total",
                 "receita_devolucao_total",
             ]
@@ -162,7 +204,7 @@ def _compute_returns_totals(
             return pd.DataFrame(
                 columns=[
                     "cd_produto",
-                    "devolucao_total",
+                    "itens_devolvidos_total",
                     "pedidos_devolvidos_total",
                     "receita_devolucao_total",
                 ]
@@ -182,7 +224,7 @@ def _compute_returns_totals(
             return pd.DataFrame(
                 columns=[
                     "cd_produto",
-                    "devolucao_total",
+                    "itens_devolvidos_total",
                     "pedidos_devolvidos_total",
                     "receita_devolucao_total",
                 ]
@@ -195,7 +237,7 @@ def _compute_returns_totals(
             return pd.DataFrame(
                 columns=[
                     "cd_produto",
-                    "devolucao_total",
+                    "itens_devolvidos_total",
                     "pedidos_devolvidos_total",
                     "receita_devolucao_total",
                 ]
@@ -208,11 +250,11 @@ def _compute_returns_totals(
         date_column=None,
         allowed_periods=None,
         units_column="qtd_sku",
-        unit_result_name="devolucao_total",
+        unit_result_name="itens_devolvidos_total",
         include_order_count=True,
         order_result_name="pedidos_devolvidos_total",
         extra_aggs={
-            "devolucao_receita_bruta": ("receita_devolucao_total", "sum"),
+            "devolucao_receita_bruta": ("receita_itens_devolvidos_total", "sum"),
         },
     )
 
@@ -220,7 +262,7 @@ def _compute_returns_totals(
         return pd.DataFrame(
             columns=[
                 "cd_produto",
-                "devolucao_total",
+                "itens_devolvidos_total",
                 "pedidos_devolvidos_total",
                 "receita_devolucao_total",
             ]
@@ -229,12 +271,12 @@ def _compute_returns_totals(
     aggregated = (
         totals.groupby("cd_produto", as_index=False)
         .agg(
-            devolucao_total=("devolucao_total", "sum"),
+            itens_devolvidos_total=("itens_devolvidos_total", "sum"),
             pedidos_devolvidos_total=("pedidos_devolvidos_total", "sum"),
-            receita_devolucao_total=("receita_devolucao_total", "sum"),
+            receita_devolucao_total=("receita_itens_devolvidos_total", "sum"),
         )
     )
     aggregated["pedidos_devolvidos_total"] = aggregated["pedidos_devolvidos_total"].fillna(0).astype(int)
-    aggregated["devolucao_total"] = aggregated["devolucao_total"].fillna(0.0)
+    aggregated["itens_devolvidos_total"] = aggregated["itens_devolvidos_total"].fillna(0.0)
     aggregated["receita_devolucao_total"] = aggregated["receita_devolucao_total"].fillna(0.0)
     return aggregated

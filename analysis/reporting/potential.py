@@ -64,40 +64,47 @@ def build_potential_sku_analysis(
         str(p) for p in period_series.dropna().tolist() if str(p) and str(p).lower() != "nat"
     }
 
+    receita_total = pd.to_numeric(data.get("rbld", 0), errors="coerce")
+    quantidade = pd.to_numeric(data.get("qtd_sku", 0), errors="coerce")
+    preco_rbld_unitario = np.where(quantidade > 0, receita_total / quantidade, np.nan)
+    preco_rbld_unitario = np.where(np.isfinite(preco_rbld_unitario), preco_rbld_unitario, np.nan)
+    data_pricing = data.assign(_preco_rbld=preco_rbld_unitario)
+    data_pricing.attrs = dict(data.attrs)
+
     produto_map = pd.Series(dtype="object")
-    if "cd_anuncio" in data.columns:
+    if "cd_anuncio" in data_pricing.columns:
         produto_map = (
-            data.loc[data["cd_anuncio"].notna(), ["cd_anuncio", "cd_produto"]]
+            data_pricing.loc[data_pricing["cd_anuncio"].notna(), ["cd_anuncio", "cd_produto"]]
             .drop_duplicates(subset=["cd_anuncio"])
             .set_index("cd_anuncio")["cd_produto"]
         )
 
     categoria_map = None
     categoria_default = category if category is not None else ""
-    if "categoria" in data.columns:
+    if "categoria" in data_pricing.columns:
         categoria_map = (
-            data.loc[data["cd_anuncio"].notna(), ["cd_anuncio", "categoria"]]
+            data_pricing.loc[data_pricing["cd_anuncio"].notna(), ["cd_anuncio", "categoria"]]
             .drop_duplicates(subset=["cd_anuncio"])
             .set_index("cd_anuncio")["categoria"]
         )
 
-    returns_raw = data.attrs.get("returns_data", pd.DataFrame())
+    returns_raw = data_pricing.attrs.get("returns_data", pd.DataFrame())
     returns_filtered = returns_report._filter_returns_dataset(returns_raw, category)
     return_totals = _build_returns_totals_by_sale_period(returns_filtered, allowed_periods)
 
     interval_prices = (
-        data.groupby("cd_anuncio")["preco_vendido"].min()
+        data_pricing.groupby("cd_anuncio")["_preco_rbld"].min()
         .replace([np.inf, -np.inf], np.nan)
     )
     grouped = (
-        data.groupby(["periodo", "cd_produto", "cd_anuncio", "ds_anuncio"], as_index=False)
+        data_pricing.groupby(["periodo", "cd_produto", "cd_anuncio", "ds_anuncio"], as_index=False)
         .agg(
             qtd_vendida=("qtd_sku", "sum"),
             pedidos=("nr_nota_fiscal", "nunique"),
             receita=("rbld", "sum"),
-            custo=("custo_total", "sum"),
+            custo=("custo_produto", "sum"),
             margem_media=("perc_margem_bruta", "mean"),
-            preco_min_periodo=("preco_vendido", "min"),
+            preco_min_periodo=("_preco_rbld", "min"),
         )
     )
 
@@ -132,7 +139,7 @@ def build_potential_sku_analysis(
 
     grouped["periodo"] = grouped["periodo"].astype(str)
     grouped.sort_values("periodo", inplace=True)
-    grouped["preco_min_periodo"] = grouped["preco_min_periodo"].round(2)
+    grouped["preco_min_periodo"] = grouped["preco_min_periodo"].fillna(0).round(2)
     available_periods = grouped["periodo"].unique()
 
     if recent_periods:

@@ -103,7 +103,7 @@ analysis/
 4. **Métricas derivadas**:
    - `receita_bruta_calc = preco_vendido * qtd_sku`
    - `rbld = RBLD` quando informado; caso contrário usa `receita_bruta_calc`
-   - `custo_total = custo_produto * qtd_sku`
+   - `custo_produto` já representa o custo total pelos itens na venda
    - `lucro_bruto_estimado = receita_bruta_calc * perc_margem_bruta`
    - `taxa_devolucao = qtd_devolvido / qtd_sku` (com proteção contra divisão por zero)
    - `pedidos` (em todas as análises) = contagem de notas fiscais distintas (`nr_nota_fiscal`)
@@ -213,7 +213,7 @@ Cada aba traz as colunas: `ano`, `mes_extenso`, `mes_abreviado`, `periodo` (`YYY
 
 **Metodologia**:
 1. Agrupa por anúncio, calculando:
-   - `quantidade_total`, `pedidos_total`, `receita_total`, `custo_medio_unitario`, `custo_total`, `devolucao_total`, `receita_devolucao_total`, `margem_media`.
+   - `quantidade_total`, `pedidos_total`, `receita_total`, `custo_medio_unitario`, `custo_produto`, `devolucao_total`, `receita_devolucao_total`, `margem_media`.
    - `taxa_devolucao = devolucao_total / quantidade_total`.
    - `ticket_medio_estimado = receita_total / pedidos_total`.
 2. Determina `custo_threshold` = percentil 25 de `custo_medio_unitario` (padrão `cost_percentile = 0.25`).
