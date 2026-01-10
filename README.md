@@ -466,7 +466,25 @@ Cada aba traz as colunas: `ano`, `mes_extenso`, `mes_abreviado`, `periodo` (`YYY
 
 ---
 
-## 9. Boas Práticas e Próximos Passos
+## 9. Interface Conversacional (Streamlit + LangChain)
+
+- **Estrutura**: todo o front-end fica em `streamlit_app/`. Lá estão o aplicativo (`app.py`), a camada de autenticação (`auth/`), os comandos do chatbot (`chat/`), os serviços de histórico e análises (`services/`), os utilitários de dados (`data/`) e a integração com LangChain (`langchain/`). Usuários e conversas são persistidos em SQLite (`SALES_TOOLKIT_DB`, padrão `.cache/streamlit/chatbot.db`).
+- **Dependências**: instale os pacotes extras com `pip install -r requirements.txt`. O arquivo inclui `streamlit`, `langchain`, `langchain-community`, `langchain-openai`, `faiss-cpu` e `pyarrow` para vetorização e otimização do dataset.
+- **Variáveis de ambiente principais**:
+   - `SALES_TOOLKIT_ROOT`: raiz do projeto (padrão diretório atual).
+   - `SALES_TOOLKIT_DATASET`: caminho absoluto do `BASE.xlsx` caso esteja fora da raiz.
+   - `SALES_TOOLKIT_CACHE`: diretório de cache (default `.cache/streamlit`).
+   - `SALES_TOOLKIT_DB`: caminho do SQLite com contas e histórico.
+   - `SALES_TOOLKIT_VECTORSTORE`: pasta onde o índice FAISS é salvo.
+   - `SALES_TOOLKIT_ADMIN_USER` / `SALES_TOOLKIT_ADMIN_PASSWORD`: criam o usuário padrão na inicialização.
+   - `GEMINI_API_KEY`: chave usada por padrão para o provedor Gemini. Outras chaves (`OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, etc.) podem ser definidas ao trocar o provedor nas configurações opcionais da `LangChainFactory` (`streamlit_app.llm.factory`).
+- **Execução**: na raiz, rode `streamlit run streamlit_app/app.py`. Após o login, utilize `/ajuda` para listar comandos (`/analise_devolucao`, `/analise_potencial`, `/analise_top`, `/analise_reputacao`, `/analise_focus`). Comandos geram as mesmas tabelas da CLI, exibidas em abas com opção de download em Excel.
+- **Fluxo da IA**: perguntas livres usam uma cadeia `RetrievalQA` alimentada por uma vector store FAISS construída sobre agregações de vendas por anúncio. A vectorização considera os itens de maior receita (até 5.000 documentos) mantendo o processamento viável para bases com milhões de linhas.
+- **Otimização de dados**: a barra lateral permite gerar uma versão Parquet da base (`DatasetManager.to_parquet`) e recriar o índice de embeddings quando novos dados forem carregados.
+
+---
+
+## 10. Boas Práticas e Próximos Passos
 
 - Revisar periodicamente se a base Excel está aderente às colunas esperadas.
 - Validar os relatórios gerados com as equipes comercial e de operações.
